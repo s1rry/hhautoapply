@@ -1,0 +1,12 @@
+.env
+.DS_Store
+__pycache__/
+*.pyc
+.ruff_cache/
+data/browser_sessions/
+logs/
+*.db
+.venv/
+venv/
+sessions/
+*.session
