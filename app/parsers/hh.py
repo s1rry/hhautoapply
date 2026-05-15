@@ -42,10 +42,6 @@ class HHParser:
         if filters.get("remote", True):
             params["schedule"] = "remote"
 
-        if filters.get("salary_from"):
-            params["salary"] = str(filters["salary_from"])
-            params["only_with_salary"] = "true"
-
         exp = filters.get("experience")
         if exp and exp in EXPERIENCE_MAP:
             params["experience"] = EXPERIENCE_MAP[exp]
