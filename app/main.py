@@ -55,8 +55,12 @@ async def main():
     dp.include_router(router)
 
     if HAS_PLAYWRIGHT:
-        await browser_manager.start()
-        log.info("playwright_started")
+        try:
+            await browser_manager.start()
+            log.info("playwright_started")
+        except Exception as e:
+            HAS_PLAYWRIGHT = False
+            log.warning("playwright_start_failed", error=str(e), mode="api_only")
     else:
         log.info("playwright_not_available", mode="api_only")
 
