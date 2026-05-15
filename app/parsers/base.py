@@ -4,9 +4,14 @@ from dataclasses import dataclass, field
 import structlog
 
 from app.utils.anti_detect import random_delay
-from app.utils.browser import browser_manager
 
 log = structlog.get_logger()
+
+browser_manager = None
+try:
+    from app.utils.browser import browser_manager
+except ImportError:
+    pass
 
 
 @dataclass
@@ -48,10 +53,13 @@ class BaseParser(abc.ABC):
         ...
 
     async def _get_page(self):
+        if browser_manager is None:
+            raise RuntimeError("Playwright not available")
         return await browser_manager.new_page(self.platform)
 
     async def _save_session(self):
-        await browser_manager.save_context(self.platform)
+        if browser_manager:
+            await browser_manager.save_context(self.platform)
 
     async def _delay(self):
         await random_delay()

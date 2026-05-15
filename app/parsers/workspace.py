@@ -1,7 +1,10 @@
 import re
 
 import structlog
-from playwright.async_api import Page
+try:
+    from playwright.async_api import Page
+except ImportError:
+    Page = None
 
 from app.config import settings
 from app.parsers.base import BaseParser, ParsedVacancy

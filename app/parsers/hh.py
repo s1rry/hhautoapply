@@ -2,7 +2,11 @@ import re
 import json
 
 import structlog
-from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
+try:
+    from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
+except ImportError:
+    Page = None
+    PlaywrightTimeout = TimeoutError
 
 from app.config import settings
 from app.parsers.base import BaseParser, ParsedVacancy
