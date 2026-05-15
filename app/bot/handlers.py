@@ -1,4 +1,5 @@
 import json
+import functools
 
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
@@ -26,12 +27,13 @@ router = Router()
 PAGE_SIZE = 5
 
 
-def admin_only(func):
-    async def wrapper(msg_or_cb, *args, **kwargs):
-        chat_id = msg_or_cb.chat.id if isinstance(msg_or_cb, Message) else msg_or_cb.message.chat.id
+def admin_only(fn):
+    @functools.wraps(fn)
+    async def wrapper(event, **kwargs):
+        chat_id = event.chat.id if isinstance(event, Message) else event.message.chat.id
         if str(chat_id) != settings.tg_admin_chat_id:
             return
-        return await func(msg_or_cb, *args, **kwargs)
+        return await fn(event, **kwargs)
     return wrapper
 
 
