@@ -18,6 +18,7 @@ log = structlog.get_logger()
 HH_BASE = "https://hh.ru"
 HH_LOGIN_URL = "https://hh.ru/account/login"
 HH_NEGOTIATIONS = "https://hh.ru/applicant/negotiations"
+HH_RESUMES = "https://hh.ru/applicant/resumes"
 
 
 class HHPlaywright:
@@ -341,6 +342,94 @@ class HHPlaywright:
 
         log.info("hh_negotiations_status", total=len(statuses))
         return statuses
+
+    async def bump_resumes(self) -> int:
+        """Click 'Поднять в поиске' on all resumes. Returns number bumped."""
+        if not self._logged_in:
+            if not await self.login():
+                return 0
+
+        page = await self._get_page()
+        bumped = 0
+
+        try:
+            await page.goto(HH_RESUMES, wait_until="domcontentloaded", timeout=45000)
+            await random_delay(2, 4)
+
+            # Find all "Поднять в поиске" buttons (free bump available)
+            buttons = await page.query_selector_all('[data-qa="resume-update-button_actions"]')
+            if not buttons:
+                buttons = await page.query_selector_all('button:has-text("Поднять в поиске")')
+
+            for btn in buttons:
+                try:
+                    is_disabled = await btn.get_attribute("disabled")
+                    if is_disabled is not None:
+                        continue
+                    await btn.click()
+                    await page.wait_for_timeout(2000)
+                    bumped += 1
+                    log.info("hh_resume_bumped")
+                    await random_delay(2, 5)
+                except Exception as e:
+                    log.warning("hh_resume_bump_btn_error", error=str(e))
+
+            if bumped > 0:
+                await browser_manager.save_context("hh")
+
+            log.info("hh_resumes_bump_complete", count=bumped)
+
+        except Exception as e:
+            log.error("hh_resume_bump_error", error=str(e))
+
+        return bumped
+
+    async def send_rejection_thanks(self, negotiation_url: str) -> bool:
+        """Send a 'thanks for feedback' message in a rejected negotiation chat.
+        This keeps the resume active in hh.ru rankings."""
+        if not self._logged_in:
+            if not await self.login():
+                return False
+
+        page = await self._get_page()
+
+        try:
+            await page.goto(negotiation_url, wait_until="domcontentloaded", timeout=45000)
+            await random_delay(2, 4)
+
+            # Find chat input
+            chat_input = await page.query_selector('[data-qa="chatik-new-message-text"]')
+            if not chat_input:
+                chat_input = await page.query_selector('textarea[placeholder*="Сообщение"]')
+            if not chat_input:
+                chat_input = await page.query_selector('textarea[name="message"]')
+
+            if not chat_input:
+                log.warning("hh_chat_input_not_found", url=negotiation_url)
+                return False
+
+            message = "Спасибо за обратную связь! Желаю успехов в подборе кандидата."
+            await chat_input.fill(message)
+            await page.wait_for_timeout(1000)
+
+            # Find send button
+            send_btn = await page.query_selector('[data-qa="chatik-do-send-message"]')
+            if not send_btn:
+                send_btn = await page.query_selector('button[type="submit"]')
+
+            if send_btn:
+                await send_btn.click()
+                await page.wait_for_timeout(2000)
+                await browser_manager.save_context("hh")
+                log.info("hh_thanks_sent", url=negotiation_url)
+                return True
+
+            log.warning("hh_send_btn_not_found", url=negotiation_url)
+            return False
+
+        except Exception as e:
+            log.error("hh_thanks_error", url=negotiation_url, error=str(e))
+            return False
 
     async def close(self):
         """Close page and save session."""

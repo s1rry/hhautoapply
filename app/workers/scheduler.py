@@ -64,6 +64,20 @@ class WorkerScheduler:
             id="auto_apply",
             name="Авто-отклики",
         )
+        self.scheduler.add_job(
+            self._job_bump_resume,
+            "interval",
+            hours=4,
+            id="bump_resume",
+            name="Поднятие резюме",
+        )
+        self.scheduler.add_job(
+            self._job_thank_rejections,
+            "interval",
+            hours=6,
+            id="thank_rejections",
+            name="Активность в чатах",
+        )
 
         self.scheduler.start()
         log.info("scheduler_started", interval=interval)
@@ -115,6 +129,35 @@ class WorkerScheduler:
                 await self._notify_if_allowed(f"✅ Отправлено {applied} автоматических откликов")
         except Exception as e:
             log.error("job_apply_error", error=str(e))
+
+    async def _job_bump_resume(self):
+        if self.is_paused:
+            return
+        try:
+            from app.parsers.hh_playwright import hh_playwright
+            if not hh_playwright:
+                return
+            count = await hh_playwright.bump_resumes()
+            if count > 0:
+                await self._notify_if_allowed(f"⬆️ Поднято резюме: {count}")
+        except Exception as e:
+            log.error("job_bump_resume_error", error=str(e))
+
+    async def _job_thank_rejections(self):
+        """Send thanks message to recent rejected negotiations.
+        Limited rate to avoid hh.ru ban: max 3 per run, with delays."""
+        if self.is_paused:
+            return
+        try:
+            from app.parsers.hh_playwright import hh_playwright
+            from app.workers.message_worker import process_rejection_thanks
+            if not hh_playwright:
+                return
+            count = await process_rejection_thanks(max_count=3)
+            if count > 0:
+                await self._notify_if_allowed(f"💬 Отправлено благодарностей: {count}")
+        except Exception as e:
+            log.error("job_thank_rejections_error", error=str(e))
 
     def pause(self):
         self.is_paused = True

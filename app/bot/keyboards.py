@@ -80,4 +80,8 @@ def settings_keyboard(is_paused: bool = False, auto_apply: bool = False) -> Inli
             InlineKeyboardButton(text="🔄 Искать сейчас", callback_data="force_search"),
             InlineKeyboardButton(text="💎 Баланс AI", callback_data="show_balance"),
         ],
+        [
+            InlineKeyboardButton(text="⬆️ Поднять резюме", callback_data="bump_resume"),
+            InlineKeyboardButton(text="💬 Спасибо за отказы", callback_data="thank_rejections"),
+        ],
     ])

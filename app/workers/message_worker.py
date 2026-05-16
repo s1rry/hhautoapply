@@ -86,6 +86,61 @@ async def _save_message(msg: dict) -> dict | None:
         }
 
 
+async def process_rejection_thanks(max_count: int = 3) -> int:
+    """Find recent rejections without a thanks reply sent, send 'thanks for feedback'.
+
+    Conservative limits to avoid hh.ru anti-spam:
+    - max_count messages per run (default 3)
+    - 60-120 sec random delay between sends
+    """
+    from app.parsers.hh_playwright import hh_playwright
+    if not hh_playwright:
+        return 0
+
+    statuses = await hh_playwright.check_negotiations_status()
+    rejections = [s for s in statuses if s.get("tab") == "discard"]
+
+    sent_count = 0
+    async with async_session() as session:
+        for rej in rejections[:max_count * 2]:  # check 2x in case some already done
+            if sent_count >= max_count:
+                break
+            thread_id = rej.get("thread_id")
+            if not thread_id:
+                continue
+
+            # Skip if already thanked (we mark via is_read=True + sender_name="__thanks_sent__")
+            already = await session.scalar(
+                select(RecruiterMessage.id).where(
+                    RecruiterMessage.external_thread_id == thread_id,
+                    RecruiterMessage.sender_name == "__thanks_sent__",
+                )
+            )
+            if already:
+                continue
+
+            # Build negotiation URL from thread_id (hh_<id> -> /negotiations/<id>)
+            tid = thread_id.replace("hh_", "")
+            url = f"https://hh.ru/applicant/negotiations/item?topicId={tid}"
+
+            success = await hh_playwright.send_rejection_thanks(url)
+            if success:
+                session.add(RecruiterMessage(
+                    platform="hh",
+                    sender_name="__thanks_sent__",
+                    sender_company=rej.get("company", ""),
+                    text="thanks message sent",
+                    external_thread_id=thread_id,
+                    is_read=True,
+                ))
+                await session.commit()
+                sent_count += 1
+                await random_delay(60, 120)
+
+    log.info("rejection_thanks_complete", sent=sent_count)
+    return sent_count
+
+
 async def generate_ai_reply(message_id: int) -> str | None:
     async with async_session() as session:
         msg = await session.get(RecruiterMessage, message_id)

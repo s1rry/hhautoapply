@@ -652,6 +652,30 @@ async def cb_show_balance(callback: CallbackQuery, **kw):
     await _send_balance(callback)
 
 
+@router.callback_query(F.data == "bump_resume")
+@admin_only
+async def cb_bump_resume(callback: CallbackQuery, **kw):
+    await callback.answer("⬆️ Поднимаю резюме...")
+    from app.parsers.hh_playwright import hh_playwright
+    if not hh_playwright:
+        await callback.message.answer("❌ Playwright не доступен")
+        return
+    count = await hh_playwright.bump_resumes()
+    if count > 0:
+        await callback.message.answer(f"✅ Поднято резюме: {count}")
+    else:
+        await callback.message.answer("ℹ️ Резюме нельзя поднять сейчас (попробуй через 4 часа)")
+
+
+@router.callback_query(F.data == "thank_rejections")
+@admin_only
+async def cb_thank_rejections(callback: CallbackQuery, **kw):
+    await callback.answer("💬 Отправляю благодарности...")
+    from app.workers.message_worker import process_rejection_thanks
+    count = await process_rejection_thanks(max_count=3)
+    await callback.message.answer(f"✅ Отправлено сообщений: {count}")
+
+
 @router.callback_query(F.data.startswith("cancel_apply:"))
 @admin_only
 async def cb_cancel_apply(callback: CallbackQuery, **kw):
