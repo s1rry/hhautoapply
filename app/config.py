@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     # Job platforms
     hh_login: str = ""
     hh_password: str = ""
+    hh_resume_id: str = ""  # ID резюме для откликов (опционально)
     workspace_login: str = ""
     workspace_password: str = ""
     geekjob_login: str = ""

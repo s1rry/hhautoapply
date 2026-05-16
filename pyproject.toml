@@ -22,6 +22,8 @@ dependencies = [
     "cryptography>=44.0.0",
     "structlog>=24.4.0",
     "tenacity>=9.0.0",
+    "playwright>=1.40.0",
+    "aiolimiter>=1.1.0",
 ]
 
 [project.optional-dependencies]

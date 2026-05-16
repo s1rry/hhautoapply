@@ -359,7 +359,55 @@ async def cb_apply(callback: CallbackQuery, **kw):
 @router.callback_query(F.data.startswith("confirm_apply:"))
 @admin_only
 async def cb_confirm_apply(callback: CallbackQuery, **kw):
-    await callback.answer("📨 Отправка не поддерживается в API-режиме")
+    vacancy_id = int(callback.data.split(":")[1])
+
+    async with async_session() as session:
+        vacancy = await session.get(Vacancy, vacancy_id)
+        if not vacancy:
+            await callback.answer("Вакансия не найдена")
+            return
+
+    # Check if Playwright is available
+    from app.parsers.hh import HHParser
+    parser = HHParser()
+    pw = parser._get_playwright()
+    if not pw:
+        await callback.answer("❌ Playwright не доступен (только на VPS)")
+        return
+
+    await callback.answer("📨 Отправляю отклик...")
+
+    # Get the cover letter from the previous message
+    cover_letter = ""
+    if callback.message and callback.message.reply_to_message:
+        cover_letter = callback.message.reply_to_message.text or ""
+    elif callback.message:
+        # Extract letter from the message text
+        text = callback.message.text or ""
+        if "\n\n" in text:
+            parts = text.split("\n\n", 2)
+            if len(parts) > 1:
+                cover_letter = parts[-1]
+
+    success = await parser.apply_to_vacancy(vacancy.url, cover_letter)
+
+    if success:
+        async with async_session() as session:
+            v = await session.get(Vacancy, vacancy_id)
+            if v:
+                v.status = VacancyStatus.APPLIED
+                from app.models.application import Application, ApplicationStatus
+                session.add(Application(
+                    vacancy_id=vacancy_id,
+                    platform=v.platform,
+                    cover_letter=cover_letter,
+                    status=ApplicationStatus.SENT,
+                    attempt_count=1,
+                ))
+                await session.commit()
+        await callback.message.answer("✅ Отклик отправлен!")
+    else:
+        await callback.message.answer("❌ Не удалось отправить отклик. Проверь логи.")
 
 
 @router.callback_query(F.data.startswith("skip:"))
@@ -509,3 +557,83 @@ async def cb_force_search(callback: CallbackQuery, **kw):
 async def cb_cancel_apply(callback: CallbackQuery, **kw):
     await callback.answer("Отменено")
     await callback.message.delete()
+
+
+# ══════════════════════════════════════════════════════════════
+#  PLAYWRIGHT / HH.RU LOGIN
+# ══════════════════════════════════════════════════════════════
+
+@router.message(Command("login"))
+@admin_only
+async def cmd_login(message: Message, **kw):
+    """Вручную залогиниться на hh.ru через Playwright."""
+    from app.parsers.hh import HHParser
+    parser = HHParser()
+    pw = parser._get_playwright()
+
+    if not pw:
+        await message.answer(
+            "❌ <b>Playwright не доступен</b>\n\n"
+            "Для входа на hh.ru нужен Playwright.\n"
+            "Разверните бота на VPS с установленным Chromium.",
+            parse_mode="HTML",
+        )
+        return
+
+    await message.answer("🔐 Выполняю вход на hh.ru...")
+    success = await pw.login()
+
+    if success:
+        await message.answer("✅ Успешный вход на hh.ru! Отклики и сообщения доступны.")
+    else:
+        await message.answer(
+            "❌ Не удалось войти на hh.ru\n\n"
+            "Проверьте:\n"
+            "• HH_LOGIN и HH_PASSWORD в .env\n"
+            "• Возможно требуется капча (попробуйте позже)\n"
+            "• Может потребоваться ручной вход через VNC",
+        )
+
+
+@router.message(Command("negotiations"))
+@admin_only
+async def cmd_negotiations(message: Message, **kw):
+    """Проверить статусы откликов на hh.ru."""
+    from app.parsers.hh import HHParser
+    parser = HHParser()
+    pw = parser._get_playwright()
+
+    if not pw:
+        await message.answer("❌ Playwright не доступен")
+        return
+
+    await message.answer("🔄 Проверяю отклики...")
+    statuses = await parser.check_negotiations()
+
+    if not statuses:
+        await message.answer("📭 Нет активных откликов или не удалось загрузить")
+        return
+
+    # Group by tab
+    invites = [s for s in statuses if s.get("tab") == "invitations"]
+    discards = [s for s in statuses if s.get("tab") == "discard"]
+    active = [s for s in statuses if s.get("tab") == "active"]
+
+    text_parts = ["📋 <b>Статусы откликов hh.ru</b>\n"]
+
+    if invites:
+        text_parts.append(f"\n🎉 <b>Приглашения ({len(invites)}):</b>")
+        for s in invites[:5]:
+            text_parts.append(f"  • {s['title'][:50]} — {s['company']}")
+
+    if active:
+        text_parts.append(f"\n📨 <b>Активные ({len(active)}):</b>")
+        for s in active[:5]:
+            text_parts.append(f"  • {s['title'][:50]} — {s['status']}")
+
+    if discards:
+        text_parts.append(f"\n❌ <b>Отказы ({len(discards)}):</b>")
+        for s in discards[:5]:
+            text_parts.append(f"  • {s['title'][:50]} — {s['company']}")
+
+    await message.answer("\n".join(text_parts), parse_mode="HTML")

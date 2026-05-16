@@ -67,6 +67,7 @@ async def run_auto_apply(auto_mode: bool = False, min_score: float = 70):
             success = False
             if vacancy.platform == "hh":
                 parser = HHParser()
+                await parser.login()
                 success = await parser.apply_to_vacancy(vacancy.url, letter)
 
             # Записываем результат

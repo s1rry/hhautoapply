@@ -5,6 +5,7 @@ import structlog
 from bs4 import BeautifulSoup
 
 from app.parsers.base import ParsedVacancy
+from app.utils.rate_limiter import hh_limiter
 
 log = structlog.get_logger()
 
@@ -48,9 +49,10 @@ class HHParser:
 
         vacancies = []
         try:
-            async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True, timeout=30) as client:
-                resp = await client.get(HH_SEARCH, params=params)
-                resp.raise_for_status()
+            async with hh_limiter:
+                async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True, timeout=30) as client:
+                    resp = await client.get(HH_SEARCH, params=params)
+                    resp.raise_for_status()
 
             soup = BeautifulSoup(resp.text, "lxml")
             cards = soup.select('[data-qa="vacancy-serp__vacancy"]')
@@ -134,9 +136,10 @@ class HHParser:
     async def get_vacancy_details(self, url: str) -> ParsedVacancy | None:
         vacancy_id = url.rstrip("/").split("/")[-1].split("?")[0]
         try:
-            async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True, timeout=30) as client:
-                resp = await client.get(url)
-                resp.raise_for_status()
+            async with hh_limiter:
+                async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True, timeout=30) as client:
+                    resp = await client.get(url)
+                    resp.raise_for_status()
 
             soup = BeautifulSoup(resp.text, "lxml")
 
@@ -172,9 +175,39 @@ class HHParser:
             return None
 
     async def apply_to_vacancy(self, url: str, cover_letter: str) -> bool:
-        log.warning("hh_apply_not_supported", url=url, reason="requires browser session")
+        """Apply via Playwright if available, otherwise skip."""
+        pw = self._get_playwright()
+        if pw:
+            return await pw.apply_to_vacancy(url, cover_letter)
+        log.warning("hh_apply_not_supported", url=url, reason="playwright not available")
         return False
 
     async def check_messages(self) -> list[dict]:
-        log.info("hh_messages_skip", reason="requires browser session")
+        """Check messages via Playwright if available."""
+        pw = self._get_playwright()
+        if pw:
+            return await pw.check_messages()
+        log.info("hh_messages_skip", reason="playwright not available")
         return []
+
+    async def check_negotiations(self) -> list[dict]:
+        """Check negotiations status via Playwright."""
+        pw = self._get_playwright()
+        if pw:
+            return await pw.check_negotiations_status()
+        return []
+
+    async def login(self) -> bool:
+        """Login via Playwright if available."""
+        pw = self._get_playwright()
+        if pw:
+            return await pw.login()
+        return True  # HTML scraping doesn't need login
+
+    def _get_playwright(self):
+        """Get HHPlaywright instance if available."""
+        try:
+            from app.parsers.hh_playwright import hh_playwright
+            return hh_playwright
+        except ImportError:
+            return None
