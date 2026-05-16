@@ -392,8 +392,7 @@ async def cb_apply(callback: CallbackQuery, **kw):
     letter, _, _ = await claude_ai.generate_cover_letter(title, desc, "")
 
     await callback.message.answer(
-        f"✉️ <b>Сопроводительное для:</b>\n{title}\n\n{letter}",
-        parse_mode="HTML",
+        letter,
         reply_markup=confirm_apply_keyboard(vacancy_id),
     )
 
