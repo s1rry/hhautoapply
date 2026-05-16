@@ -235,6 +235,34 @@ async def cmd_resume(message: Message, **kw):
     await message.answer("▶️ Возобновлено", reply_markup=main_menu())
 
 
+@router.message(F.text == "💎 Баланс AI")
+@router.message(Command("balance"))
+@admin_only
+async def btn_balance(message: Message, **kw):
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{settings.anthropic_base_url}/v1/balance",
+                headers={"Authorization": f"Bearer {settings.anthropic_api_key}"},
+            )
+            data = resp.json()
+        balance = data.get("balance_cents", 0)
+        inp = data.get("total_input_tokens", 0)
+        out = data.get("total_output_tokens", 0)
+        total = data.get("total_tokens_used", 0)
+        await message.answer(
+            f"💎 <b>Баланс WaveAPI</b>\n\n"
+            f"💰 Баланс: <b>{balance} центов</b> (${balance/100:.2f})\n"
+            f"📥 Input токены: <b>{inp:,}</b>\n"
+            f"📤 Output токены: <b>{out:,}</b>\n"
+            f"📊 Всего использовано: <b>{total:,}</b>",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+
+
 # ══════════════════════════════════════════════════════════════
 #  ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ══════════════════════════════════════════════════════════════
