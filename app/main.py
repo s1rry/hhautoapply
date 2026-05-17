@@ -83,10 +83,15 @@ async def main():
 
     # Telegram user-bot — listens for DMs on second account
     async def on_tg_dm(msg: dict):
+        log.info("on_tg_dm_called", sender=msg.get("sender"), preview=msg.get("text", "")[:50])
         from app.workers.message_worker import _save_message
-        from datetime import datetime, timezone
-        saved = await _save_message(msg)
+        try:
+            saved = await _save_message(msg)
+        except Exception as e:
+            log.error("on_tg_dm_save_error", error=str(e))
+            saved = msg  # still notify even if DB save failed
         if not saved:
+            log.info("on_tg_dm_skipped_dedup")
             return
         text = (
             f"📩 <b>Личное сообщение — Telegram (2-й аккаунт)</b>\n\n"
@@ -100,6 +105,7 @@ async def main():
                 text=text,
                 parse_mode=ParseMode.HTML,
             )
+            log.info("on_tg_dm_notified")
         except Exception as e:
             log.error("tg_userbot_notify_error", error=str(e))
 

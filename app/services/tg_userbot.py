@@ -104,7 +104,9 @@ class TGUserBot:
                     "company": "",
                     "title": "",
                     "text": (event.raw_text or "")[:2000],
-                    "thread_id": f"tg_{sender.id}",
+                    # Unique per message — avoids dedup collapsing all DMs
+                    # from the same sender into one
+                    "thread_id": f"tg_{sender.id}_{event.id}",
                     "chat_id": sender.id,
                     "has_unread": True,
                 }
