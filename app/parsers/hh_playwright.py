@@ -702,78 +702,48 @@ class HHPlaywright:
                 return 0
 
             await activator.click()
-            await page.wait_for_timeout(5000)
+            await page.wait_for_timeout(5500)
             await self._save_debug_screenshot(page, "thanks_step2_widget_open")
 
-            # Try to locate the chatik iframe — widget content usually lives there
-            chat_frame = None
-            for f in page.frames:
-                if "chatik" in (f.url or "") or "chat" in (f.url or ""):
-                    chat_frame = f
-                    log.info("hh_thanks_chat_frame_found", url=f.url)
-                    break
-            if not chat_frame:
-                # Fallback: iframe with chat-related class
-                iframe_el = await page.query_selector('iframe[src*="chat"]')
-                if iframe_el:
-                    chat_frame = await iframe_el.content_frame()
+            ctx = page  # widget lives in main DOM, not iframe
 
-            # Working context: chat_frame if found, else page
-            ctx = chat_frame if chat_frame else page
-
-            # Dump real DOM in the right context
-            widget_info = await ctx.evaluate(
+            # Find chats that contain "Отказ" text — pure text search,
+            # don't rely on specific data-qa attributes
+            rejection_handles = await page.evaluate_handle(
                 """() => {
-                    const allDq = new Set();
-                    for (const el of document.querySelectorAll('[data-qa]')) {
-                        const dq = el.getAttribute('data-qa');
-                        if (dq) allDq.add(dq);
+                    const out = [];
+                    const all = document.querySelectorAll('div[role="button"], li, div[tabindex]');
+                    for (const el of all) {
+                        const text = (el.innerText || '').trim();
+                        if (!text || text.length > 300) continue;
+                        if (/отказ/i.test(text) && el.offsetParent !== null) {
+                            // pick the smallest container that still has "Отказ"
+                            out.push(el);
+                        }
                     }
-                    const inputs = [];
-                    for (const el of document.querySelectorAll('textarea, [contenteditable="true"]')) {
-                        inputs.push({
-                            dq: el.getAttribute('data-qa') || '',
-                            ph: el.getAttribute('placeholder') || '',
-                            visible: el.offsetParent !== null,
-                        });
-                    }
-                    const iframes = Array.from(document.querySelectorAll('iframe')).map(i => i.src);
-                    return {dq: Array.from(allDq).slice(0, 80), inputs, iframes};
+                    // Keep outermost unique cards — drop nested duplicates
+                    const filtered = out.filter(el => !out.some(o => o !== el && o.contains(el)));
+                    return filtered;
                 }"""
             )
-            log.info("hh_thanks_widget_dump", in_frame=bool(chat_frame), info=widget_info)
+            count = await page.evaluate("els => els.length", rejection_handles)
+            log.info("hh_thanks_rejection_chats_found", count=count)
 
-            # 4. Find chats in the widget (ctx = iframe or main page)
-            chat_items = await ctx.query_selector_all(
-                '[data-qa*="chatik-chat-item"], [data-qa*="chat-item"], [class*="chat-item"]'
-            )
-            if not chat_items:
-                chat_items = await ctx.query_selector_all('[role="button"][data-qa*="chat"]')
-            log.info("hh_thanks_chat_items", count=len(chat_items))
-
-            # Try to find a chat with rejection status
-            rejection_chat = None
-            for item in chat_items[:30]:
-                try:
-                    text = (await item.inner_text()).lower()
-                    if "отказ" in text or "отклон" in text:
-                        rejection_chat = item
-                        log.info("hh_thanks_rejection_chat_found", text=text[:80])
-                        break
-                except Exception:
-                    pass
-
-            if not rejection_chat and chat_items:
-                # Fall back to first chat just to test the flow
-                rejection_chat = chat_items[0]
-                log.info("hh_thanks_no_rejection_marker_using_first")
-
-            if not rejection_chat:
+            if count == 0:
                 await self._save_debug_screenshot(page, "thanks_step3_no_chats")
-                log.warning("hh_thanks_no_chats_in_widget")
                 return 0
 
-            await rejection_chat.click()
+            # Click first rejection chat
+            clicked = await page.evaluate(
+                """els => {
+                    if (!els.length) return false;
+                    els[0].click();
+                    return true;
+                }""",
+                rejection_handles,
+            )
+            if not clicked:
+                return 0
             await page.wait_for_timeout(3500)
             await self._save_debug_screenshot(page, "thanks_step3_chat_open")
 
@@ -808,15 +778,18 @@ class HHPlaywright:
             )
             log.info("hh_thanks_chatik_dump", info=chatik_info)
 
-            # Look for chat input inside chatik widget first
+            # Look for chat input — in chatik widget OR any visible textarea
             input_selectors = [
                 '[data-qa="chatik-new-message-text"]',
                 '[data-qa*="chatik"] textarea',
                 '[data-qa*="chatik"] [contenteditable="true"]',
                 '[class*="chatik"] textarea',
                 '[class*="chatik"] [contenteditable="true"]',
-                'textarea[placeholder*="Сообщение"]',
-                'textarea[placeholder*="сообщение"]',
+                'textarea[placeholder*="Сообщение" i]',
+                'textarea[placeholder*="сообщение" i]',
+                'textarea[placeholder*="Введите" i]',
+                'div[contenteditable="true"]',
+                'textarea',
             ]
             chat_input = None
             for sel in input_selectors:

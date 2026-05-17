@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import anthropic
 import structlog
@@ -14,6 +15,7 @@ from app.ai.prompts import (
 log = structlog.get_logger()
 
 MODEL = "claude-sonnet-4-6"
+AI_STATE_FILE = Path("data/ai_state.json")
 
 
 class ClaudeAI:
@@ -30,38 +32,61 @@ class ClaudeAI:
                 fb_kwargs["base_url"] = settings.anthropic_fallback_base_url
             self.fallback = anthropic.AsyncAnthropic(**fb_kwargs)
 
-        # Default — primary
-        self.client = self.primary
+        # Persistent flag — once primary is exhausted we stick to fallback
+        self.use_fallback = self._load_use_fallback()
+
+    def _load_use_fallback(self) -> bool:
+        try:
+            if AI_STATE_FILE.exists():
+                return bool(json.loads(AI_STATE_FILE.read_text()).get("use_fallback", False))
+        except Exception:
+            pass
+        return False
+
+    def _save_use_fallback(self):
+        try:
+            AI_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            AI_STATE_FILE.write_text(json.dumps({"use_fallback": self.use_fallback}))
+        except Exception as e:
+            log.warning("ai_state_save_error", error=str(e))
+
+    def reset_fallback(self):
+        """Manual reset — go back to primary after topping it up."""
+        self.use_fallback = False
+        self._save_use_fallback()
+        log.info("ai_fallback_reset")
 
     async def _call(self, system: str, user_message: str, max_tokens: int = 1024) -> tuple[str, int, int]:
-        clients = [("primary", self.primary)]
-        if self.fallback:
-            clients.append(("fallback", self.fallback))
+        # Permanent fallback: if primary was exhausted before, go straight to fallback.
+        if self.use_fallback and self.fallback:
+            response = await self.fallback.messages.create(
+                model=MODEL, max_tokens=max_tokens, system=system,
+                messages=[{"role": "user", "content": user_message}],
+            )
+            text = response.content[0].text
+            return text, response.usage.input_tokens, response.usage.output_tokens
 
-        last_err = None
-        for name, client in clients:
-            try:
-                response = await client.messages.create(
-                    model=MODEL,
-                    max_tokens=max_tokens,
-                    system=system,
+        try:
+            response = await self.primary.messages.create(
+                model=MODEL, max_tokens=max_tokens, system=system,
+                messages=[{"role": "user", "content": user_message}],
+            )
+            text = response.content[0].text
+            return text, response.usage.input_tokens, response.usage.output_tokens
+        except Exception as e:
+            err_str = str(e)
+            is_quota = "insufficient_quota" in err_str or "billing" in err_str.lower() or "402" in err_str
+            if is_quota and self.fallback:
+                log.warning("ai_quota_exhausted_switching_permanently")
+                self.use_fallback = True
+                self._save_use_fallback()
+                response = await self.fallback.messages.create(
+                    model=MODEL, max_tokens=max_tokens, system=system,
                     messages=[{"role": "user", "content": user_message}],
                 )
                 text = response.content[0].text
-                if name == "fallback":
-                    log.info("ai_using_fallback")
                 return text, response.usage.input_tokens, response.usage.output_tokens
-            except Exception as e:
-                err_str = str(e)
-                last_err = e
-                # Fall through to next client on quota/billing errors
-                if "insufficient_quota" in err_str or "billing" in err_str.lower() or "402" in err_str:
-                    log.warning("ai_quota_exhausted", provider=name)
-                    continue
-                # Other errors — re-raise immediately
-                raise
-        # All providers exhausted
-        raise last_err if last_err else RuntimeError("AI call failed")
+            raise
 
     async def analyze_vacancy(self, vacancy_title: str, vacancy_description: str, skills: str = "") -> dict:
         system = SYSTEM_VACANCY_ANALYZER.format(
