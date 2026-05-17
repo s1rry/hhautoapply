@@ -705,44 +705,55 @@ class HHPlaywright:
             await page.wait_for_timeout(5500)
             await self._save_debug_screenshot(page, "thanks_step2_widget_open")
 
-            ctx = page  # widget lives in main DOM, not iframe
+            ctx = page
 
-            # Search every element that contains literally "Отказ" near the top,
-            # take the innermost clickable ancestor and click it directly in JS.
+            # Search recursively through both regular DOM and shadow roots
+            # Also check iframes
             click_result = await page.evaluate(
                 """() => {
-                    // Find all elements whose immediate text equals 'Отказ' or contains 'Отказ' as own short text
-                    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-                    const matches = [];
-                    let node;
-                    while ((node = walker.nextNode())) {
-                        const t = (node.nodeValue || '').trim();
-                        if (t === 'Отказ' || /^Отказ$/i.test(t)) {
-                            if (node.parentElement && node.parentElement.offsetParent !== null) {
-                                matches.push(node.parentElement);
-                            }
+                    function* deepNodes(root) {
+                        yield root;
+                        if (root.shadowRoot) {
+                            for (const n of deepNodes(root.shadowRoot)) yield n;
+                        }
+                        const kids = root.children || [];
+                        for (const c of kids) {
+                            for (const n of deepNodes(c)) yield n;
                         }
                     }
-                    if (!matches.length) {
-                        // Fallback: any visible element whose innerText starts/contains 'Отказ'
-                        const all = document.querySelectorAll('*');
-                        for (const el of all) {
-                            if (el.children.length === 0) {
-                                const t = (el.innerText || '').trim();
-                                if (/отказ/i.test(t) && t.length < 50 && el.offsetParent !== null) {
-                                    matches.push(el);
-                                }
-                            }
-                        }
-                    }
-                    if (!matches.length) return {count: 0};
 
-                    // For first match, walk up to find a clickable card
+                    const matches = [];
+                    for (const el of deepNodes(document.body)) {
+                        if (!el.children || el.children.length > 0) continue;
+                        const t = (el.textContent || el.innerText || '').trim();
+                        if (!t || t.length > 30) continue;
+                        if (/^Отказ$/i.test(t)) {
+                            // Check visibility — climb up checking offsetParent
+                            let v = el;
+                            while (v && !v.offsetParent && v !== document.body) {
+                                if (v.parentElement) v = v.parentElement; else break;
+                            }
+                            matches.push(el);
+                        }
+                    }
+
+                    // Also check iframes
+                    const iframes = [];
+                    for (const f of document.querySelectorAll('iframe')) {
+                        try {
+                            iframes.push({src: f.src, has_doc: !!f.contentDocument});
+                        } catch (e) {
+                            iframes.push({src: f.src, error: e.message});
+                        }
+                    }
+
+                    if (!matches.length) return {count: 0, iframes};
+
+                    // Climb up to find clickable card
                     let target = matches[0];
-                    for (let i = 0; i < 10; i++) {
+                    for (let i = 0; i < 12; i++) {
                         if (!target.parentElement) break;
                         const p = target.parentElement;
-                        // A clickable card usually has cursor:pointer, role=button or onclick
                         const cs = window.getComputedStyle(p);
                         if (cs.cursor === 'pointer' || p.getAttribute('role') === 'button' || p.hasAttribute('tabindex')) {
                             target = p;
@@ -750,9 +761,15 @@ class HHPlaywright:
                         }
                         target = p;
                     }
-                    target.scrollIntoView({block: 'center'});
+                    try { target.scrollIntoView({block: 'center'}); } catch(e) {}
                     target.click();
-                    return {count: matches.length, clicked: true, tag: target.tagName, cls: (target.className || '').toString().slice(0, 80)};
+                    return {
+                        count: matches.length,
+                        clicked: true,
+                        tag: target.tagName,
+                        cls: (target.className || '').toString().slice(0, 80),
+                        iframes: iframes
+                    };
                 }"""
             )
             log.info("hh_thanks_click_result", info=click_result)
