@@ -692,7 +692,25 @@ async def cb_thank_rejections(callback: CallbackQuery, **kw):
     await callback.answer("💬 Отправляю благодарности...")
     from app.workers.message_worker import process_rejection_thanks
     count = await process_rejection_thanks(max_count=3)
-    await callback.message.answer(f"✅ Отправлено сообщений: {count}")
+    await callback.message.answer(f"Отправлено сообщений: {count}")
+    # Always send diagnostic screenshots so we can see what hh.ru showed
+    from pathlib import Path
+    from aiogram.types import FSInputFile
+    for name in (
+        "debug_thanks_step1_discard_list.png",
+        "debug_thanks_step2_after_click.png",
+        "debug_thanks_step3_no_input.png",
+        "debug_thanks_step4_filled.png",
+        "debug_thanks_step5_no_send_btn.png",
+        "debug_thanks_step6_after_send.png",
+        "debug_thanks_overall_error.png",
+    ):
+        p = Path(f"data/{name}")
+        if p.exists():
+            try:
+                await callback.message.answer_photo(FSInputFile(p), caption=name[6:-4])
+            except Exception:
+                pass
 
 
 @router.callback_query(F.data.startswith("cancel_apply:"))

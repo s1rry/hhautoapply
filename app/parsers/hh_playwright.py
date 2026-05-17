@@ -637,7 +637,10 @@ class HHPlaywright:
 
     async def send_thanks_via_clicks(self, max_count: int = 3) -> int:
         """Open the discard tab, click each rejection card and send thanks.
-        Works around hh.ru cards being JS-bound divs (no href)."""
+
+        Diagnostic-first: tries once, saves screenshots at every step,
+        and reports honestly whether hh.ru even allows chat after rejection.
+        """
         if not self._logged_in:
             if not await self.login():
                 return 0
@@ -650,63 +653,97 @@ class HHPlaywright:
                 f"{HH_NEGOTIATIONS}?page=0&filter=response&state=discard",
                 wait_until="domcontentloaded", timeout=45000,
             )
-            try:
-                await page.wait_for_selector('[data-qa="negotiations-item"]', timeout=10000)
-            except PlaywrightTimeout:
-                log.warning("hh_thanks_no_discards")
+            await page.wait_for_timeout(3000)
+            await self._save_debug_screenshot(page, "thanks_step1_discard_list")
+
+            cards = page.locator('[data-qa="negotiations-item"]')
+            count = await cards.count()
+            log.info("hh_thanks_cards_found", count=count)
+            if count == 0:
                 return 0
-            await page.wait_for_timeout(2000)
 
-            card_count = await page.locator('[data-qa="negotiations-item"]').count()
-            log.info("hh_thanks_cards_found", count=card_count)
+            # Click the first card. Don't assume navigation — may be modal.
+            await cards.first.click()
+            await page.wait_for_timeout(6000)
+            await self._save_debug_screenshot(page, "thanks_step2_after_click")
+            log.info("hh_thanks_after_click", url=page.url)
 
-            for idx in range(min(card_count, max_count * 2)):
-                if sent >= max_count:
-                    break
-
-                # Re-query each iteration — after clicking and going back,
-                # old handles are stale
+            # Look for chat input with many selectors
+            input_selectors = [
+                '[data-qa="chatik-new-message-text"]',
+                'textarea[placeholder*="Сообщение"]',
+                'textarea[placeholder*="сообщение"]',
+                'textarea[name="message"]',
+                'textarea',
+                'div[contenteditable="true"]',
+                '[contenteditable="true"]',
+            ]
+            chat_input = None
+            for sel in input_selectors:
                 try:
-                    await page.goto(
-                        f"{HH_NEGOTIATIONS}?page=0&filter=response&state=discard",
-                        wait_until="domcontentloaded", timeout=45000,
-                    )
-                    await page.wait_for_selector('[data-qa="negotiations-item"]', timeout=10000)
-                    await page.wait_for_timeout(1500)
-
-                    cards = page.locator('[data-qa="negotiations-item"]')
-                    if idx >= await cards.count():
+                    el = await page.query_selector(sel)
+                    if el:
+                        chat_input = el
+                        log.info("hh_thanks_input_found", selector=sel)
                         break
+                except Exception:
+                    pass
 
-                    # Click the i-th card
-                    target = cards.nth(idx)
-                    title_el = target.locator('[data-qa="negotiations-item-title"]').first
-                    try:
-                        title_text = await title_el.inner_text(timeout=2000)
-                    except Exception:
-                        title_text = "?"
-                    log.info("hh_thanks_click_card", idx=idx, title=title_text[:60])
+            if not chat_input:
+                await self._save_debug_screenshot(page, "thanks_step3_no_input")
+                # Dump DOM around any forms
+                dom_info = await page.evaluate(
+                    """() => {
+                        const inputs = document.querySelectorAll('textarea, [contenteditable]');
+                        return Array.from(inputs).slice(0, 5).map(el => ({
+                            tag: el.tagName,
+                            placeholder: el.getAttribute('placeholder') || '',
+                            name: el.getAttribute('name') || '',
+                            visible: el.offsetParent !== null,
+                        }));
+                    }"""
+                )
+                log.warning("hh_thanks_no_input_dom", dom=dom_info, url=page.url)
+                return 0
 
-                    async with page.expect_navigation(timeout=15000, wait_until="domcontentloaded"):
-                        await target.click()
-                    await page.wait_for_timeout(2500)
+            await chat_input.fill("Спасибо за обратную связь! Желаю успехов в подборе кандидата.")
+            await page.wait_for_timeout(1500)
+            await self._save_debug_screenshot(page, "thanks_step4_filled")
 
-                    ok = await self._try_send_thanks_on_current_page()
-                    log.info("hh_thanks_card_result", idx=idx, sent=ok, page=page.url)
-                    if ok:
-                        sent += 1
-                        await random_delay(60, 120)
-                except PlaywrightTimeout:
-                    log.warning("hh_thanks_card_timeout", idx=idx)
-                    continue
-                except Exception as e:
-                    log.warning("hh_thanks_card_error", idx=idx, error=str(e))
-                    continue
+            # Try send
+            send_selectors = [
+                '[data-qa="chatik-do-send-message"]',
+                'button[type="submit"]',
+                'button:has-text("Отправить")',
+            ]
+            send_btn = None
+            for sel in send_selectors:
+                try:
+                    el = await page.query_selector(sel)
+                    if el:
+                        send_btn = el
+                        log.info("hh_thanks_send_btn_found", selector=sel)
+                        break
+                except Exception:
+                    pass
 
+            if not send_btn:
+                await self._save_debug_screenshot(page, "thanks_step5_no_send_btn")
+                log.warning("hh_thanks_no_send_btn")
+                return 0
+
+            await send_btn.click()
+            await page.wait_for_timeout(3500)
+            await self._save_debug_screenshot(page, "thanks_step6_after_send")
+            sent = 1
             log.info("hh_thanks_done", sent=sent)
             return sent
 
         except Exception as e:
+            try:
+                await self._save_debug_screenshot(page, "thanks_overall_error")
+            except Exception:
+                pass
             log.error("hh_thanks_overall_error", error=str(e))
             return sent
 
