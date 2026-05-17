@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     # Anthropic
     anthropic_api_key: str = ""
     anthropic_base_url: str = ""
+    # Fallback used automatically when the primary returns insufficient_quota
+    anthropic_fallback_api_key: str = ""
+    anthropic_fallback_base_url: str = ""
 
     # Database
     database_url: str = "sqlite+aiosqlite:///data/jobhunter.db"

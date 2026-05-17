@@ -327,39 +327,52 @@ async def cmd_balance(message: Message, **kw):
     await _send_balance(message)
 
 
-async def _send_balance(target):
-    """Отправить баланс AI — работает и для Message, и для CallbackQuery."""
+async def _fetch_balance(base_url: str, api_key: str) -> dict | None:
     import httpx
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
-                f"{settings.anthropic_base_url}/v1/balance",
-                headers={"Authorization": f"Bearer {settings.anthropic_api_key}"},
+                f"{base_url}/v1/balance",
+                headers={"Authorization": f"Bearer {api_key}"},
             )
-            data = resp.json()
-        balance = data.get("balance_cents", 0)
-        inp = data.get("total_input_tokens", 0)
-        out = data.get("total_output_tokens", 0)
-        total = data.get("total_tokens_used", 0)
-        text = (
-            f"💎 <b>Баланс WaveAPI</b>\n\n"
-            f"💰 Баланс: <b>{balance} центов</b> (${balance/100:.2f})\n"
-            f"📥 Input токены: <b>{inp:,}</b>\n"
-            f"📤 Output токены: <b>{out:,}</b>\n"
-            f"📊 Всего использовано: <b>{total:,}</b>"
-        )
-        if isinstance(target, CallbackQuery):
-            await target.message.answer(text, parse_mode="HTML")
-            await target.answer()
-        else:
-            await target.answer(text, parse_mode="HTML")
-    except Exception as e:
-        err = f"❌ Ошибка: {e}"
-        if isinstance(target, CallbackQuery):
-            await target.message.answer(err)
-            await target.answer()
-        else:
-            await target.answer(err)
+            return resp.json()
+    except Exception:
+        return None
+
+
+def _format_provider(name: str, base_url: str, data: dict | None) -> str:
+    if not data:
+        return f"<b>{name}</b>\n  ❌ нет ответа от {base_url}"
+    balance = data.get("balance_cents", 0)
+    inp = data.get("total_input_tokens", 0)
+    out = data.get("total_output_tokens", 0)
+    total = data.get("total_tokens_used", 0)
+    return (
+        f"<b>{name}</b>\n"
+        f"  💰 {balance} центов (${balance/100:.2f})\n"
+        f"  📥 in: <b>{inp:,}</b>\n"
+        f"  📤 out: <b>{out:,}</b>\n"
+        f"  📊 total: <b>{total:,}</b>"
+    )
+
+
+async def _send_balance(target):
+    """Отправить баланс AI — основной + резерв."""
+    parts = ["💎 <b>Балансы AI</b>"]
+
+    primary_data = await _fetch_balance(settings.anthropic_base_url, settings.anthropic_api_key)
+    parts.append(_format_provider("Основной (WaveAPI)", settings.anthropic_base_url, primary_data))
+
+    if settings.anthropic_fallback_api_key:
+        fb_data = await _fetch_balance(settings.anthropic_fallback_base_url, settings.anthropic_fallback_api_key)
+        parts.append(_format_provider("Резерв (TonWave)", settings.anthropic_fallback_base_url, fb_data))
+
+    text = "\n\n".join(parts)
+    if isinstance(target, CallbackQuery):
+        await target.message.answer(text, parse_mode="HTML")
+        await target.answer()
+    else:
+        await target.answer(text, parse_mode="HTML")
 
 
 # ══════════════════════════════════════════════════════════════

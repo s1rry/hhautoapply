@@ -18,20 +18,50 @@ MODEL = "claude-sonnet-4-6"
 
 class ClaudeAI:
     def __init__(self):
-        kwargs = {"api_key": settings.anthropic_api_key}
+        primary_kwargs = {"api_key": settings.anthropic_api_key}
         if settings.anthropic_base_url:
-            kwargs["base_url"] = settings.anthropic_base_url
-        self.client = anthropic.AsyncAnthropic(**kwargs)
+            primary_kwargs["base_url"] = settings.anthropic_base_url
+        self.primary = anthropic.AsyncAnthropic(**primary_kwargs)
+
+        self.fallback = None
+        if settings.anthropic_fallback_api_key:
+            fb_kwargs = {"api_key": settings.anthropic_fallback_api_key}
+            if settings.anthropic_fallback_base_url:
+                fb_kwargs["base_url"] = settings.anthropic_fallback_base_url
+            self.fallback = anthropic.AsyncAnthropic(**fb_kwargs)
+
+        # Default — primary
+        self.client = self.primary
 
     async def _call(self, system: str, user_message: str, max_tokens: int = 1024) -> tuple[str, int, int]:
-        response = await self.client.messages.create(
-            model=MODEL,
-            max_tokens=max_tokens,
-            system=system,
-            messages=[{"role": "user", "content": user_message}],
-        )
-        text = response.content[0].text
-        return text, response.usage.input_tokens, response.usage.output_tokens
+        clients = [("primary", self.primary)]
+        if self.fallback:
+            clients.append(("fallback", self.fallback))
+
+        last_err = None
+        for name, client in clients:
+            try:
+                response = await client.messages.create(
+                    model=MODEL,
+                    max_tokens=max_tokens,
+                    system=system,
+                    messages=[{"role": "user", "content": user_message}],
+                )
+                text = response.content[0].text
+                if name == "fallback":
+                    log.info("ai_using_fallback")
+                return text, response.usage.input_tokens, response.usage.output_tokens
+            except Exception as e:
+                err_str = str(e)
+                last_err = e
+                # Fall through to next client on quota/billing errors
+                if "insufficient_quota" in err_str or "billing" in err_str.lower() or "402" in err_str:
+                    log.warning("ai_quota_exhausted", provider=name)
+                    continue
+                # Other errors — re-raise immediately
+                raise
+        # All providers exhausted
+        raise last_err if last_err else RuntimeError("AI call failed")
 
     async def analyze_vacancy(self, vacancy_title: str, vacancy_description: str, skills: str = "") -> dict:
         system = SYSTEM_VACANCY_ANALYZER.format(
