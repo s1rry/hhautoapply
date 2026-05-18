@@ -196,26 +196,21 @@ async def btn_messages(message: Message, **kw):
 
     invites = [s for s in statuses if s.get("tab") == "invitations"]
     discards = [s for s in statuses if s.get("tab") == "discard"]
-    active = [s for s in statuses if s.get("tab") == "active"]
+    pending = [s for s in statuses if s.get("tab") == "pending"]
 
     parts = ["📩 <b>Сообщения и отклики hh.ru</b>"]
-    parts.append(f"\n🎉 Приглашения: <b>{len(invites)}</b>")
-    parts.append(f"📨 Активные: <b>{len(active)}</b>")
+    parts.append(f"\n🎉 Приглашения и собеседования: <b>{len(invites)}</b>")
     parts.append(f"❌ Отказы: <b>{len(discards)}</b>")
+    parts.append(f"⏳ Без ответа: <b>{len(pending)}</b>")
 
     if invites:
-        parts.append("\n🎉 <b>Приглашения:</b>")
-        for s in invites[:10]:
-            parts.append(f"  • {s['title'][:60]}\n    🏢 {s['company']}")
-
-    if active:
-        parts.append("\n📨 <b>Активные:</b>")
-        for s in active[:10]:
-            parts.append(f"  • {s['title'][:60]}\n    {s.get('status','')[:60]}")
+        parts.append("\n🎉 <b>Приглашения / собеседования:</b>")
+        for s in invites[:15]:
+            parts.append(f"  • {s['title'][:60]}\n    🏢 {s['company']} — {s.get('status','')[:50]}")
 
     if discards:
         parts.append("\n❌ <b>Отказы:</b>")
-        for s in discards[:5]:
+        for s in discards[:15]:
             parts.append(f"  • {s['title'][:60]} — {s['company'][:30]}")
 
     text = "\n".join(parts)

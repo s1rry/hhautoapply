@@ -22,13 +22,14 @@ HH_RESUMES = "https://hh.ru/applicant/resumes"
 
 
 def _classify_status(status: str) -> str:
-    """Map hh.ru status text to one of: invitations, discard, active."""
+    """Map hh.ru status text to one of: invitations, discard, pending."""
     s = (status or "").lower()
-    if any(k in s for k in ("приглаш", "пригласил", "ждёт", "ждет", "интервью", "собеседование")):
+    if any(k in s for k in ("приглаш", "пригласил", "интервью", "собеседован", "оффер", "офер")):
         return "invitations"
     if any(k in s for k in ("отказ", "не подош", "отклонил", "решил остановить")):
         return "discard"
-    return "active"
+    # everything else ("думают", "просмотрено", "не просмотрено", "новый") → noise
+    return "pending"
 
 
 class HHPlaywright:
@@ -636,7 +637,7 @@ class HHPlaywright:
         log.info("hh_negotiations_status", total=len(statuses),
                  invites=sum(1 for s in statuses if s["tab"] == "invitations"),
                  discards=sum(1 for s in statuses if s["tab"] == "discard"),
-                 active=sum(1 for s in statuses if s["tab"] == "active"))
+                 pending=sum(1 for s in statuses if s["tab"] == "pending"))
         return statuses
 
     async def bump_resumes(self) -> int:
