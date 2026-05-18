@@ -168,7 +168,7 @@ class HHApiClient:
         if not rhash:
             return False, {"error": "HH_RESUME_ID not set in .env"}
 
-        url = "https://hh.ru/applicant_negotiations"
+        url = "https://hh.ru/applicant/vacancy_response/popup"
         form = {
             "resume_hash": rhash,
             "vacancy_id": str(vacancy_id),
@@ -177,49 +177,41 @@ class HHApiClient:
             "lux": "true",
             "ignore_postponed": "true",
         }
-        async with httpx.AsyncClient(cookies=self._cookies, headers=_headers(self._xsrf), timeout=20) as c:
+        headers = _headers(self._xsrf)
+        headers["Referer"] = f"https://hh.ru/vacancy/{vacancy_id}"
+        async with httpx.AsyncClient(cookies=self._cookies, headers=headers, timeout=20) as c:
             try:
                 r = await c.post(url, data=form)
             except httpx.RequestError as e:
                 return False, {"error": f"http: {e}"}
 
             text = r.text or ""
-            ct = r.headers.get("content-type", "")
-            data = None
-            if "application/json" in ct:
-                try:
-                    data = r.json()
-                except Exception:
-                    data = None
 
-            # 200 / 204 / 303 considered success
-            if r.status_code in (200, 204):
-                # Check JSON body for specific error markers
-                if isinstance(data, dict):
-                    if data.get("error") == "negotiations-creation-error":
-                        # Possible reasons: already_applied, daily_limit, test_required
-                        reason = data.get("errors") or data.get("reason") or ""
-                        s = str(reason).lower()
-                        if "already" in s or "duplicate" in s:
-                            return "already", {"data": data}
-                        if "limit" in s or "quota" in s:
-                            return False, {"error": "daily_limit", "data": data}
-                        if "test" in s or "questionnaire" in s:
-                            return False, {"error": "needs_test", "data": data}
-                        return False, {"error": "neg-creation-error", "data": data}
-                return True, {"status": r.status_code}
-
-            if r.status_code == 303:
-                # Successful: HH redirects to topic page
-                return True, {"status": 303, "location": r.headers.get("location", "")}
-
-            if r.status_code == 409:
-                return "already", {"status": 409}
-
+            # Auth issues
             if r.status_code in (401, 403):
                 return False, {"error": "auth_required", "status": r.status_code}
 
-            # Other
+            # Hh-specific text markers (from Vlad's project)
+            if "negotiations-limit-exceeded" in text:
+                return False, {"error": "daily_limit"}
+            if "test-required" in text:
+                return False, {"error": "needs_test"}
+            if "alreadyApplied" in text or "already-applied" in text:
+                return "already", {}
+
+            if r.status_code == 200:
+                # Body usually contains JSON with shortVacancy when successful
+                if "shortVacancy" in text or '"success":true' in text or '"responded":true' in text:
+                    return True, {"status": 200}
+                # Login page check
+                if "data-qa=\"account-login\"" in text or "Войти на сайт" in text:
+                    return False, {"error": "auth_required"}
+                # Empty / unknown 200 — assume success
+                return True, {"status": 200, "note": "no_marker"}
+
+            if r.status_code in (204, 303):
+                return True, {"status": r.status_code}
+
             return False, {"status": r.status_code, "body": text[:400]}
 
 
