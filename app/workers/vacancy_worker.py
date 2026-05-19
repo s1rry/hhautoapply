@@ -32,12 +32,15 @@ SEARCH_QUERIES = [
     "аналитик BPMN",
 ]
 
-PARSERS = {
-    "hh": HHParser(),
-    "habr": HabrParser(),
-    "geekjob": GeekJobParser(),
-    "workspace": WorkspaceParser(),
-}
+def _build_parsers() -> dict:
+    """Active platforms based on per-platform caps (>0 = enabled)."""
+    parsers = {"hh": HHParser()}
+    if settings.max_applies_per_day_habr > 0:
+        parsers["habr"] = HabrParser()
+    return parsers
+
+
+PARSERS = _build_parsers()
 
 
 async def run_vacancy_search():

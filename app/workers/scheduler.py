@@ -221,9 +221,9 @@ class WorkerScheduler:
                 issues.append("hh.ru")
                 log.warning("login_health_hh_expired")
 
-            # 2. Habr — Playwright с retry
-            habr_ok = False
-            if habr_playwright:
+            # 2. Habr — Playwright с retry. Пропускаем если отключён (cap=0)
+            if settings.max_applies_per_day_habr > 0 and habr_playwright:
+                habr_ok = False
                 for attempt in range(2):
                     try:
                         habr_ok = await habr_playwright.is_logged_in()

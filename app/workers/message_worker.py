@@ -13,12 +13,15 @@ from app.utils.anti_detect import random_delay
 
 log = structlog.get_logger()
 
-PARSERS = {
-    "hh": HHParser(),
-    "habr": HabrParser(),
-    "workspace": WorkspaceParser(),
-    "geekjob": GeekJobParser(),
-}
+def _build_parsers() -> dict:
+    from app.config import settings as _s
+    parsers = {"hh": HHParser()}
+    if _s.max_applies_per_day_habr > 0:
+        parsers["habr"] = HabrParser()
+    return parsers
+
+
+PARSERS = _build_parsers()
 
 
 async def check_all_messages() -> list[dict]:
