@@ -944,6 +944,26 @@ async def cmd_test_apply(message: Message, **kw):
         except _async.TimeoutError:
             res, info = False, {"error": "timeout"}
 
+        # Fallback to Playwright for vacancies requiring questionnaire
+        if res is False and (info or {}).get("error") == "needs_test":
+            await message.answer(f"📋 <b>[{tag}]</b> Опросник — переключаюсь на Playwright…", parse_mode="HTML")
+            try:
+                ai_letter, _, _ = await claude_ai.generate_cover_letter(v.title, v.description or "")
+            except Exception:
+                ai_letter = letter
+            from app.parsers.hh import HHParser
+            pw_parser = HHParser()
+            try:
+                await _async.wait_for(pw_parser.login(), timeout=60)
+                res = await _async.wait_for(
+                    pw_parser.apply_to_vacancy(v.url, ai_letter, screenshot_name=tag),
+                    timeout=180,
+                )
+                info = {"path": "playwright", "result": str(res)}
+            except _async.TimeoutError:
+                res = False
+                info = {"error": "playwright_timeout"}
+
         status_emoji = "✅" if res is True else ("ℹ️" if res == "already" else "❌")
         result_label = {True: "ОТПРАВЛЕНО", "already": "Уже откликались", False: "ОШИБКА"}.get(res, "ОШИБКА")
         info_str = ""
@@ -954,6 +974,17 @@ async def cmd_test_apply(message: Message, **kw):
             f"{status_emoji} <b>[{tag}]</b> {result_label}\n🔗 {v.url}{info_str}",
             parse_mode="HTML",
         )
+        # If Playwright was used — send screenshots
+        if info and info.get("path") == "playwright":
+            from pathlib import Path as _Path
+            from aiogram.types import FSInputFile as _FSI
+            for stage in ("before", "after"):
+                p = _Path(f"data/test_apply_{tag}_{stage}.png")
+                if p.exists():
+                    try:
+                        await message.answer_photo(_FSI(p), caption=f"[{tag}] {stage}")
+                    except Exception:
+                        pass
 
         if res is True:
             stats["sent"] += 1
