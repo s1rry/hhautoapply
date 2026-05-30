@@ -69,6 +69,20 @@ async def run_auto_apply(auto_mode: bool = False, min_score: float = 70):
             log.warning("sync_applied_skip", error=str(e))
     applied = 0
 
+    # Тиринг день/ночь (МСК):
+    #  День 9–22 — откликаемся на ВСЁ реальное (score>=1), от высокого score
+    #  к низкому (ORDER BY score DESC ниже задаёт порядок тиров
+    #  100→80→60→40→30→20→15→…), чтобы добить дневной лимит до 200.
+    #  Ночь 22–9 — только высокоценные (score>=50): на них реагируем сразу,
+    #  остальное ждёт утра.
+    #  score=0 (дисквалифицированные 1С/junior/qa/не-аналитик) не берём никогда.
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+    _hour = _dt.now(_ZI("Europe/Moscow")).hour
+    _is_daytime = 9 <= _hour < 22
+    effective_min_score = 1 if _is_daytime else 50
+    log.info("apply_window", daytime=_is_daytime, min_score=effective_min_score)
+
     # Per-platform daily limits
     platform_caps = {
         "hh": settings.max_applies_per_day_hh,
@@ -115,7 +129,7 @@ async def run_auto_apply(auto_mode: bool = False, min_score: float = 70):
                 .where(
                     Vacancy.platform == plat,
                     Vacancy.status == VacancyStatus.APPROVED,
-                    Vacancy.ai_score >= min_score,
+                    Vacancy.ai_score >= effective_min_score,
                     Vacancy.id.notin_(failed_3plus),
                 )
                 .order_by(Vacancy.ai_score.desc())

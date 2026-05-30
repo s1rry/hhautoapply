@@ -476,9 +476,28 @@ class WorkerScheduler:
                 total_failed = sum(failed_by_plat.values())
 
                 if total_sent == 0 and total_failed == 0:
+                    # Heartbeat: пользователь хочет сводку каждые 2 часа даже
+                    # при нуле — чтобы видеть, что бот жив. Шлём короткое.
+                    today_sent_e = await session.scalar(
+                        select(func.count(Application.id))
+                        .where(
+                            Application.status == ApplicationStatus.SENT,
+                            func.date(Application.created_at) == func.current_date(),
+                        )
+                    )
+                    text = (
+                        f"📊 <b>Сводка откликов {window_start.strftime('%H:%M')}–{now.strftime('%H:%M')}</b>\n\n"
+                        f"За окно откликов не было.\n"
+                        f"🗓 За сегодня всего: <b>{today_sent_e or 0}</b>"
+                    )
+                    if self.notify:
+                        try:
+                            await self.notify(text)
+                        except Exception as e:
+                            log.error("apply_summary_notify_error", error=str(e))
                     self._last_apply_summary_at = now
                     self._save_state()
-                    log.info("apply_summary_empty", window_start=window_start.isoformat())
+                    log.info("apply_summary_empty_sent", window_start=window_start.isoformat())
                     return
 
                 # Топ-5 успешных откликов за окно (по ai_score)
