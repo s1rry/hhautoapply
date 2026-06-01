@@ -218,7 +218,12 @@ class WorkerScheduler:
             from app.models.application import Application, ApplicationStatus
             from app.models.vacancy import Vacancy
 
-            echo_cutoff = datetime.now(MSK) - timedelta(minutes=45)
+            # created_at в БД — наивное UTC (SQLite). Сравнивать с MSK-временем
+            # нельзя: окно "уезжает" на 3 часа и эхо-проверка не срабатывает.
+            # Берём UTC-naive.
+            echo_cutoff = (
+                datetime.now(timezone.utc) - timedelta(minutes=45)
+            ).replace(tzinfo=None)
 
             for msg in new_msgs:
                 status_lc = (msg.get("status", "") or "").lower().strip()
