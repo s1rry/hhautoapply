@@ -332,7 +332,8 @@ class WorkerScheduler:
         hh — через httpx (быстро, без Playwright). Habr — через Playwright.
         """
         try:
-            from app.parsers.hh_api import hh_api_client
+            import httpx as _httpx
+            from app.parsers.hh_oauth import hh_oauth
             from app.parsers.habr_playwright import habr_playwright
 
             PLATFORM_LABEL = {"hh": "hh.ru", "habr": "Хабр Карьера"}
@@ -342,9 +343,23 @@ class WorkerScheduler:
             # Собираем актуальный статус по платформам
             status: dict[str, bool] = {}
 
-            # 1. HH (httpx)
+            # 1. HH — проверяем OAuth-токен (именно через него идут отклики),
+            # а НЕ куки: куки протухают раньше токена и давали ложную паузу HH,
+            # хотя OAuth-отклики работали. get_token() сам рефрешит токен.
             try:
-                status["hh"] = await hh_api_client.is_logged_in()
+                _tok = await hh_oauth.get_token()
+                if _tok:
+                    async with _httpx.AsyncClient(timeout=15) as _c:
+                        _r = await _c.get(
+                            "https://api.hh.ru/me",
+                            headers={
+                                "Authorization": f"Bearer {_tok}",
+                                "User-Agent": "ru.hh.android/8.116",
+                            },
+                        )
+                    status["hh"] = _r.status_code == 200
+                else:
+                    status["hh"] = False
             except Exception as e:
                 log.warning("login_health_hh_check_error", error=str(e))
                 status["hh"] = False
