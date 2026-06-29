@@ -21,6 +21,7 @@ from app.bot.keyboards import (
     message_keyboard,
     confirm_apply_keyboard,
     settings_keyboard,
+    clear_neg_keyboard,
 )
 
 router = Router()
@@ -798,6 +799,67 @@ async def cb_bump_resume(callback: CallbackQuery, **kw):
         await callback.message.answer(f"✅ Поднято резюме: {count}")
     else:
         await callback.message.answer("ℹ️ Резюме нельзя поднять сейчас (попробуй через 4 часа)")
+
+
+@router.callback_query(F.data == "clear_neg")
+@admin_only
+async def cb_clear_neg_menu(callback: CallbackQuery, **kw):
+    await callback.answer()
+    await callback.message.answer(
+        "🧹 <b>Очистка откликов на hh.ru</b>\n\n"
+        "Что убрать:\n"
+        "• <b>Отказы</b> — отклики, где работодатель уже ответил отказом\n"
+        "• <b>Старше N дней</b> — старые отклики без ответа\n\n"
+        "Идёт через официальный API, отклики просто скрываются из списка.",
+        parse_mode="HTML",
+        reply_markup=clear_neg_keyboard(),
+    )
+
+
+@router.callback_query(F.data.startswith("clearneg:"))
+@admin_only
+async def cb_clear_neg_run(callback: CallbackQuery, **kw):
+    mode = callback.data.split(":", 1)[1]
+    from app.parsers.hh_oauth import hh_oauth
+
+    if mode == "discard":
+        await callback.answer("🚫 Убираю отказы...")
+        res = await hh_oauth.clear_negotiations(older_than_days=None)
+        title = "Отказы"
+    elif mode == "old14":
+        await callback.answer("🗓 Чищу старше 14 дней...")
+        res = await hh_oauth.clear_negotiations(older_than_days=14)
+        title = "Старше 14 дней"
+    elif mode == "old30":
+        await callback.answer("🗓 Чищу старше 30 дней...")
+        res = await hh_oauth.clear_negotiations(older_than_days=30)
+        title = "Старше 30 дней"
+    elif mode == "dry":
+        await callback.answer("👀 Смотрю что попадёт под отказы...")
+        res = await hh_oauth.clear_negotiations(older_than_days=None, dry_run=True)
+        title = "Предпросмотр (отказы)"
+    else:
+        await callback.answer("Неизвестный режим")
+        return
+
+    if res.get("error") == "no_oauth_token":
+        await callback.message.answer(
+            "❌ Нет токена hh API. Сначала войди через OAuth (тест-отклик или /login)."
+        )
+        return
+
+    verb = "Под удаление попадёт" if mode == "dry" else "Убрано"
+    text = (
+        f"✅ <b>{title}</b>\n"
+        f"Просмотрено откликов: {res.get('scanned', 0)}\n"
+        f"{verb}: <b>{res.get('deleted', 0)}</b>"
+    )
+    names = res.get("names") or []
+    if names:
+        listed = "\n".join(f"• {n}" for n in names[:15])
+        more = f"\n…и ещё {len(names) - 15}" if len(names) > 15 else ""
+        text += f"\n\n{listed}{more}"
+    await callback.message.answer(text, parse_mode="HTML")
 
 
 @router.callback_query(F.data == "thank_rejections")

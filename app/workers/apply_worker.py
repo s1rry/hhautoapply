@@ -139,17 +139,11 @@ async def run_auto_apply(auto_mode: bool = False, min_score: float = 70):
         # Mix platforms a bit: interleave
         vacancies = all_vacs
 
-    # Static cover letter — used for normal applies (no questions, no required letter).
-    # Saves ~2-3k AI tokens per apply. AI letters used only when Playwright fallback
-    # kicks in for vacancies with questionnaires.
-    STATIC_LETTER = (
-        "Заинтересовала ваша вакансия. Имею коммерческий опыт в роли "
-        "системного и бизнес-аналитика: сбор и анализ требований, "
-        "BPMN / UML, проектирование REST API и интеграций, SQL, постановка "
-        "задач разработчикам, приёмка результатов. Готов обсудить детали "
-        "и пройти интервью.\n\n"
-        "Контакты: i.egorov8080@gmail.com, tg https://t.me/egorov_analyst"
-    )
+    # Письмо собирается из шаблона с вариациями (render_letter) под каждую
+    # вакансию: каждое письмо чуть разное и упоминает название. Токены не
+    # тратятся. AI-письмо включается только в Playwright-fallback для вакансий
+    # с обязательным тестом/анкетой.
+    from app.parsers.letter_template import render_letter
 
     # Глобальные ошибки (daily_limit, истёкший токен, нет резюме) одинаково
     # бьют по всем вакансиям платформы — нет смысла ретраить и засорять БД
@@ -161,7 +155,7 @@ async def run_auto_apply(auto_mode: bool = False, min_score: float = 70):
         if vacancy.platform in aborted_platforms:
             continue
         try:
-            letter = STATIC_LETTER
+            letter = render_letter(vacancy.title)
 
             # HH через OAuth API (быстро, обходит DDoS Guard)
             result = False

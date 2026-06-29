@@ -303,5 +303,116 @@ class HHOAuth:
             return "already", {"error": "not_found"}
         return False, {"status": r.status_code, "body": (r.text or "")[:300]}
 
+    # ── Negotiations (отклики) ─────────────────────────────────────────
+    # GET  /negotiations?status=active&page=&per_page=100  — список откликов
+    # DELETE /negotiations/active/{id}                     — отозвать/скрыть
+    # state.id == "discard" → отказ работодателя.
+
+    async def list_negotiations(self, status: str = "active") -> list[dict]:
+        """Собрать все отклики постранично. Пусто, если нет токена."""
+        token = await self.get_token()
+        if not token:
+            return []
+        out: list[dict] = []
+        headers = {"User-Agent": UA, "Authorization": f"Bearer {token}"}
+        try:
+            async with httpx.AsyncClient(timeout=20, verify=False) as c:
+                page = 0
+                while True:
+                    r = await c.get(
+                        "https://api.hh.ru/negotiations",
+                        headers=headers,
+                        params={"status": status, "page": page, "per_page": 100},
+                    )
+                    if r.status_code != 200:
+                        log.warning("neg_list_failed", status=r.status_code, body=r.text[:200])
+                        break
+                    d = r.json()
+                    items = d.get("items", [])
+                    if not items:
+                        break
+                    out.extend(items)
+                    if page + 1 >= d.get("pages", 0):
+                        break
+                    page += 1
+        except Exception as e:
+            log.warning("neg_list_error", error=str(e))
+        return out
+
+    async def _delete_negotiation(self, nid: str, with_decline_message: bool) -> bool:
+        token = await self.get_token()
+        if not token:
+            return False
+        try:
+            async with httpx.AsyncClient(timeout=15, verify=False) as c:
+                r = await c.delete(
+                    f"https://api.hh.ru/negotiations/active/{nid}",
+                    headers={"User-Agent": UA, "Authorization": f"Bearer {token}"},
+                    params={"with_decline_message": str(with_decline_message).lower()},
+                )
+            if r.status_code in (200, 204):
+                return True
+            log.warning("neg_delete_failed", nid=nid, status=r.status_code, body=r.text[:150])
+        except Exception as e:
+            log.warning("neg_delete_error", nid=nid, error=str(e))
+        return False
+
+    async def clear_negotiations(
+        self, older_than_days: int | None = None, dry_run: bool = False
+    ) -> dict:
+        """Удалить отклики.
+
+        older_than_days=None  → только отказы (state == "discard").
+        older_than_days=N     → любые отклики, обновлённые больше N дней назад.
+
+        Возвращает {"scanned", "deleted", "names": [...], "error"?}.
+        """
+        import datetime as _dt
+
+        items = await self.list_negotiations(status="active")
+        if not items:
+            tok = await self.get_token()
+            if not tok:
+                return {"scanned": 0, "deleted": 0, "names": [], "error": "no_oauth_token"}
+            return {"scanned": 0, "deleted": 0, "names": []}
+
+        deleted = 0
+        names: list[str] = []
+        now = _dt.datetime.now(_dt.timezone.utc)
+
+        for neg in items:
+            state_id = (neg.get("state") or {}).get("id", "")
+            is_discard = state_id == "discard"
+
+            if older_than_days is not None:
+                upd = neg.get("updated_at") or neg.get("created_at") or ""
+                try:
+                    dt_upd = _dt.datetime.strptime(upd, "%Y-%m-%dT%H:%M:%S%z")
+                except (ValueError, TypeError):
+                    continue
+                if (now - dt_upd).days <= older_than_days:
+                    continue
+            elif not is_discard:
+                continue
+
+            vac = neg.get("vacancy") or {}
+            vac_name = vac.get("name", "без названия")
+            if dry_run:
+                deleted += 1
+                if len(names) < 30:
+                    names.append(vac_name)
+                continue
+
+            # Для активного отклика (не отказ) нужно передать decline-сообщение.
+            ok = await self._delete_negotiation(
+                str(neg.get("id")), with_decline_message=not is_discard
+            )
+            if ok:
+                deleted += 1
+                if len(names) < 30:
+                    names.append(vac_name)
+
+        return {"scanned": len(items), "deleted": deleted, "names": names}
+
 
 hh_oauth = HHOAuth()
