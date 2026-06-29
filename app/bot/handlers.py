@@ -4,6 +4,8 @@ import functools
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 
@@ -21,6 +23,7 @@ from app.bot.keyboards import (
     message_keyboard,
     confirm_apply_keyboard,
     settings_keyboard,
+    clear_neg_keyboard,
 )
 
 router = Router()
@@ -205,12 +208,8 @@ async def btn_top(message: Message, **kw):
 @admin_only
 async def btn_messages(message: Message, **kw):
     await message.answer("🔄 Проверяю статусы откликов на hh.ru...")
-    from app.parsers.hh_playwright import hh_playwright
-    if not hh_playwright:
-        await message.answer("❌ Playwright не доступен")
-        return
-
-    statuses = await hh_playwright.check_negotiations_status()
+    from app.parsers.hh_oauth import hh_oauth
+    statuses = await hh_oauth.negotiations_status()
 
     if not statuses:
         await message.answer("📭 Нет активных откликов")
@@ -224,16 +223,6 @@ async def btn_messages(message: Message, **kw):
     parts.append(f"\n🎉 Приглашения и собеседования: <b>{len(invites)}</b>")
     parts.append(f"❌ Отказы: <b>{len(discards)}</b>")
     parts.append(f"⏳ Без ответа: <b>{len(pending)}</b>")
-
-    if invites:
-        parts.append("\n🎉 <b>Приглашения / собеседования:</b>")
-        for s in invites[:15]:
-            parts.append(f"  • {s['title'][:60]}\n    🏢 {s['company']} — {s.get('status','')[:50]}")
-
-    if discards:
-        parts.append("\n❌ <b>Отказы:</b>")
-        for s in discards[:15]:
-            parts.append(f"  • {s['title'][:60]} — {s['company'][:30]}")
 
     text = "\n".join(parts)
     # Telegram limit ~4096 chars
@@ -789,15 +778,89 @@ async def cb_show_balance(callback: CallbackQuery, **kw):
 @admin_only
 async def cb_bump_resume(callback: CallbackQuery, **kw):
     await callback.answer("⬆️ Поднимаю резюме...")
-    from app.parsers.hh_playwright import hh_playwright
-    if not hh_playwright:
-        await callback.message.answer("❌ Playwright не доступен")
+    from app.parsers.hh_oauth import hh_oauth
+    res = await hh_oauth.bump_resumes()
+    if res.get("error") == "no_oauth_token":
+        await callback.message.answer(
+            "❌ Нет токена hh API. Сначала войди: /login."
+        )
         return
-    count = await hh_playwright.bump_resumes()
-    if count > 0:
-        await callback.message.answer(f"✅ Поднято резюме: {count}")
+    if res.get("error"):
+        await callback.message.answer(f"❌ Не получилось поднять резюме: {res['error']}")
+        return
+    bumped = res.get("bumped", 0)
+    blocked = res.get("blocked", 0)
+    if bumped > 0:
+        titles = res.get("titles") or []
+        lst = "\n".join(f"• {t}" for t in titles)
+        await callback.message.answer(f"✅ Поднято резюме: {bumped}\n{lst}")
+    elif blocked > 0:
+        await callback.message.answer(
+            f"ℹ️ Пока нельзя поднять ({blocked} шт). hh разрешает раз в 4 часа, попробуй позже."
+        )
     else:
-        await callback.message.answer("ℹ️ Резюме нельзя поднять сейчас (попробуй через 4 часа)")
+        await callback.message.answer("ℹ️ Резюме не найдены в аккаунте hh.")
+
+
+@router.callback_query(F.data == "clear_neg")
+@admin_only
+async def cb_clear_neg_menu(callback: CallbackQuery, **kw):
+    await callback.answer()
+    await callback.message.answer(
+        "🧹 <b>Очистка откликов на hh.ru</b>\n\n"
+        "Что убрать:\n"
+        "• <b>Отказы</b> — отклики, где работодатель уже ответил отказом\n"
+        "• <b>Старше N дней</b> — старые отклики без ответа\n\n"
+        "Идёт через официальный API, отклики просто скрываются из списка.",
+        parse_mode="HTML",
+        reply_markup=clear_neg_keyboard(),
+    )
+
+
+@router.callback_query(F.data.startswith("clearneg:"))
+@admin_only
+async def cb_clear_neg_run(callback: CallbackQuery, **kw):
+    mode = callback.data.split(":", 1)[1]
+    from app.parsers.hh_oauth import hh_oauth
+
+    if mode == "discard":
+        await callback.answer("🚫 Убираю отказы...")
+        res = await hh_oauth.clear_negotiations(older_than_days=None)
+        title = "Отказы"
+    elif mode == "old14":
+        await callback.answer("🗓 Чищу старше 14 дней...")
+        res = await hh_oauth.clear_negotiations(older_than_days=14)
+        title = "Старше 14 дней"
+    elif mode == "old30":
+        await callback.answer("🗓 Чищу старше 30 дней...")
+        res = await hh_oauth.clear_negotiations(older_than_days=30)
+        title = "Старше 30 дней"
+    elif mode == "dry":
+        await callback.answer("👀 Смотрю что попадёт под отказы...")
+        res = await hh_oauth.clear_negotiations(older_than_days=None, dry_run=True)
+        title = "Предпросмотр (отказы)"
+    else:
+        await callback.answer("Неизвестный режим")
+        return
+
+    if res.get("error") == "no_oauth_token":
+        await callback.message.answer(
+            "❌ Нет токена hh API. Сначала войди через OAuth (тест-отклик или /login)."
+        )
+        return
+
+    verb = "Под удаление попадёт" if mode == "dry" else "Убрано"
+    text = (
+        f"✅ <b>{title}</b>\n"
+        f"Просмотрено откликов: {res.get('scanned', 0)}\n"
+        f"{verb}: <b>{res.get('deleted', 0)}</b>"
+    )
+    names = res.get("names") or []
+    if names:
+        listed = "\n".join(f"• {n}" for n in names[:15])
+        more = f"\n…и ещё {len(names) - 15}" if len(names) > 15 else ""
+        text += f"\n\n{listed}{more}"
+    await callback.message.answer(text, parse_mode="HTML")
 
 
 @router.callback_query(F.data == "thank_rejections")
@@ -841,46 +904,99 @@ async def cb_cancel_apply(callback: CallbackQuery, **kw):
 #  PLAYWRIGHT / HH.RU LOGIN
 # ══════════════════════════════════════════════════════════════
 
+class LoginSG(StatesGroup):
+    phone = State()
+    code = State()
+
+
 @router.message(Command("login"))
 @admin_only
-async def cmd_login(message: Message, **kw):
-    """Вручную залогиниться на hh.ru через Playwright."""
-    from app.parsers.hh import HHParser
-    parser = HHParser()
-    pw = parser._get_playwright()
+async def cmd_login(message: Message, state: FSMContext, **kw):
+    """Вход на hh.ru по одноразовому коду (телефон → код)."""
+    await state.clear()
+    default = settings.hh_login or ""
+    hint = (
+        f"\n\nЛогин из настроек: <code>{default}</code> — можешь прислать его же."
+        if default else ""
+    )
+    await message.answer(
+        "🔐 <b>Вход на hh.ru по коду</b>\n\n"
+        "Пришли номер телефона, привязанный к hh (например <code>+79991234567</code>). "
+        "hh отправит код, его потом введёшь здесь." + hint
+        + "\n\nОтмена: /cancel",
+        parse_mode="HTML",
+    )
+    await state.set_state(LoginSG.phone)
 
-    if not pw:
-        await message.answer(
-            "❌ <b>Playwright не доступен</b>\n\n"
-            "Для входа на hh.ru нужен Playwright.\n"
-            "Разверните бота на VPS с установленным Chromium.",
-            parse_mode="HTML",
-        )
+
+@router.message(Command("cancel"))
+@admin_only
+async def cmd_cancel(message: Message, state: FSMContext, **kw):
+    from app.parsers.hh_login import drop_session
+    await drop_session(message.chat.id)
+    await state.clear()
+    await message.answer("Отменено.")
+
+
+@router.message(LoginSG.phone)
+@admin_only
+async def login_phone(message: Message, state: FSMContext, **kw):
+    phone = (message.text or "").strip()
+    if not phone or len(phone) < 5:
+        await message.answer("Не похоже на номер. Пришли телефон ещё раз или /cancel.")
         return
-
-    await message.answer("🔐 Выполняю вход на hh.ru...")
-    success = await pw.login()
-
-    if success:
-        await message.answer("✅ Успешный вход на hh.ru! Отклики и сообщения доступны.")
-    else:
-        await message.answer(
-            "❌ Не удалось войти на hh.ru\n\n"
-            "Проверьте:\n"
-            "• HH_LOGIN и HH_PASSWORD в .env\n"
-            "• Возможно требуется капча (попробуйте позже)\n"
-            "• Может потребоваться ручной вход через VNC",
-        )
-        # Send debug screenshot if available
+    await message.answer("⏳ Открываю вход на hh и запрашиваю код...")
+    from app.parsers.hh_login import OTPLoginSession, set_session
+    sess = OTPLoginSession()
+    res = await sess.start(phone)
+    if res.get("status") == "code_sent":
+        set_session(message.chat.id, sess)
+        await state.set_state(LoginSG.code)
+        await message.answer("📩 hh отправил код (SMS или почта). Пришли его сюда одним сообщением.")
+    elif res.get("status") == "captcha":
         from pathlib import Path
         from aiogram.types import FSInputFile
-        for name in ("debug_login_failed.png", "debug_login_check.png"):
-            p = Path(f"data/{name}")
-            if p.exists():
-                try:
-                    await message.answer_photo(FSInputFile(p), caption=f"🖼 {name}")
-                except Exception:
-                    pass
+        p = Path("data/hh_login_captcha.png")
+        await sess.cancel()
+        await state.clear()
+        if p.exists():
+            await message.answer_photo(
+                FSInputFile(p),
+                caption="hh просит капчу — автоматом сейчас не пройти. Попробуй /login чуть позже.",
+            )
+        else:
+            await message.answer("hh просит капчу. Попробуй /login позже.")
+    else:
+        await sess.cancel()
+        await state.clear()
+        await message.answer(
+            f"❌ Не удалось начать вход: {res.get('error')}\nПопробуй /login ещё раз."
+        )
+
+
+@router.message(LoginSG.code)
+@admin_only
+async def login_code(message: Message, state: FSMContext, **kw):
+    code = (message.text or "").strip()
+    from app.parsers.hh_login import get_session, drop_session
+    sess = get_session(message.chat.id)
+    if not sess:
+        await state.clear()
+        await message.answer("Сессия входа потеряна. Начни заново: /login")
+        return
+    await message.answer("⏳ Проверяю код...")
+    res = await sess.submit_code(code)
+    await drop_session(message.chat.id)
+    await state.clear()
+    if res.get("status") == "ok":
+        await message.answer(
+            "✅ Вход выполнен. Токен hh и браузерная сессия обновлены.\n"
+            "Теперь работают отклики, прохождение тестов и поднятие резюме."
+        )
+    else:
+        await message.answer(
+            f"❌ Код не подошёл: {res.get('error')}\nПопробуй /login заново."
+        )
 
 
 @router.message(Command("test_apply"))

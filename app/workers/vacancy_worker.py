@@ -224,14 +224,25 @@ async def run_vacancy_analysis():
                 salary_from=vacancy.salary_from,
                 salary_to=vacancy.salary_to,
                 is_remote=bool(vacancy.is_remote),
+                salary_currency=vacancy.salary_currency or "",
                 desired_salary_min=settings.desired_salary_min,
                 desired_salary_max=settings.desired_salary_max,
             )
+
+            # Формат работы для приоритета откликов: удалёнка → гибрид → офис
+            _fmt = f"{vacancy.title or ''} {vacancy.description or ''}".lower()
+            if bool(vacancy.is_remote) or "удалён" in _fmt or "удален" in _fmt or "remote" in _fmt:
+                _work_format = "remote"
+            elif "гибрид" in _fmt or "hybrid" in _fmt:
+                _work_format = "hybrid"
+            else:
+                _work_format = "office"
 
             async with async_session() as session:
                 v = await session.get(Vacancy, vacancy.id)
                 v.ai_score = analysis.get("score", 0)
                 v.ai_reason = analysis.get("reason", "")
+                v.work_format = _work_format
                 v.status = VacancyStatus.ANALYZED
                 # Порог AI убран по запросу пользователя — одобряем ВСЕ
                 # проанализированные вакансии. Бот откликнется на любую, кроме

@@ -25,6 +25,16 @@ TITLE_POSITIVES = [
     r"фулстек.?аналит",
 ]
 
+# Минимальная зарплата: вакансии с указанной ЗП ниже отсеиваем.
+# Без указанной ЗП — откликаемся (многие не ставят).
+SALARY_FLOOR = 120000
+
+# Бренды-исключения — не откликаемся на их вакансии (по запросу пользователя)
+BRAND_NEGATIVES = [
+    r"wildberries", r"вайлдберриз", r"вайлдбериз", r"\bwb\b",
+    r"\bozon\b", r"озон",
+]
+
 # Hard negatives — instant disqualify
 HARD_NEGATIVES = [
     r"\b1с\b",  # 1С аналитики — отдельная вселенная
@@ -38,6 +48,7 @@ HARD_NEGATIVES = [
     r"тестировщик",
     r"стажёр",
     r"стажер",
+    r"ученик",
     r"intern\b",
     r"\bjunior\b",  # only junior
 ]
@@ -75,6 +86,7 @@ def analyze_vacancy(
     salary_from: int | None = None,
     salary_to: int | None = None,
     is_remote: bool = False,
+    salary_currency: str = "",
     desired_salary_min: int = 200000,
     desired_salary_max: int = 400000,
 ) -> dict:
@@ -107,6 +119,33 @@ def analyze_vacancy(
                 "is_relevant": False,
                 "seniority": "unknown",
                 "red_flags": [f"neg:{neg}"],
+                "stack_match": 0,
+            }
+
+    # 2b. Бренды-исключения (WB/Ozon) — ищем в заголовке+описании+навыках
+    for brand in BRAND_NEGATIVES:
+        if re.search(brand, full, re.IGNORECASE):
+            return {
+                "score": 0,
+                "reason": f"Disqualified by brand exclusion: {brand}",
+                "is_relevant": False,
+                "seniority": "unknown",
+                "red_flags": [f"brand:{brand}"],
+                "stack_match": 0,
+            }
+
+    # 2c. Зарплата ниже порога (если указана и в рублях) — отсеиваем.
+    #     Без указанной ЗП — пропускаем дальше (многие не ставят).
+    cur = (salary_currency or "").upper()
+    if (salary_from or salary_to) and cur in ("", "RUR", "RUB", "РУБ"):
+        best = max(salary_from or 0, salary_to or 0)
+        if 0 < best < SALARY_FLOOR:
+            return {
+                "score": 0,
+                "reason": f"Salary {best} below floor {SALARY_FLOOR}",
+                "is_relevant": False,
+                "seniority": "unknown",
+                "red_flags": ["salary_below_floor"],
                 "stack_match": 0,
             }
 

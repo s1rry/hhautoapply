@@ -84,4 +84,16 @@ def settings_keyboard(is_paused: bool = False, auto_apply: bool = False) -> Inli
         [
             InlineKeyboardButton(text="⬆️ Поднять резюме", callback_data="bump_resume"),
         ],
+        [
+            InlineKeyboardButton(text="🧹 Очистить отклики", callback_data="clear_neg"),
+        ],
+    ])
+
+
+def clear_neg_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚫 Убрать отказы", callback_data="clearneg:discard")],
+        [InlineKeyboardButton(text="🗓 Старше 14 дней", callback_data="clearneg:old14")],
+        [InlineKeyboardButton(text="🗓 Старше 30 дней", callback_data="clearneg:old30")],
+        [InlineKeyboardButton(text="👀 Показать без удаления", callback_data="clearneg:dry")],
     ])

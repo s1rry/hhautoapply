@@ -39,6 +39,14 @@ async def notify_telegram(bot: Bot, text: str):
         log.error("telegram_notify_error", error=str(e))
 
 
+def _is_quiet_hours() -> bool:
+    """Тихие часы (МСК): ночью не пушим уведомления (в т.ч. DM 2-го аккаунта)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    hour = datetime.now(ZoneInfo("Europe/Moscow")).hour
+    return not (settings.notify_hour_start <= hour < settings.notify_hour_end)
+
+
 async def main():
     structlog.configure(
         processors=[
@@ -92,6 +100,9 @@ async def main():
             saved = msg  # still notify even if DB save failed
         if not saved:
             log.info("on_tg_dm_skipped_dedup")
+            return
+        if _is_quiet_hours():
+            log.info("on_tg_dm_quiet_skip")  # сохранили в БД, ночью не пушим
             return
         text = (
             f"📩 <b>Личное сообщение — Telegram (2-й аккаунт)</b>\n\n"

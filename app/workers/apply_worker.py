@@ -1,7 +1,7 @@
 import asyncio
 import re
 import structlog
-from sqlalchemy import select, func
+from sqlalchemy import select, func, case
 
 from app.config import settings
 from app.database import async_session
@@ -122,6 +122,13 @@ async def run_auto_apply(auto_mode: bool = False, min_score: float = 70):
             Application.status == ApplicationStatus.FAILED,
         ).group_by(Application.vacancy_id).having(func.count(Application.id) >= 3)
 
+        # Приоритет формата: удалёнка (0) → гибрид (1) → офис/прочее (2).
+        # Внутри формата — по убыванию score. Так сначала отрабатываем удалёнку.
+        fmt_priority = case(
+            (Vacancy.work_format == "remote", 0),
+            (Vacancy.work_format == "hybrid", 1),
+            else_=2,
+        )
         all_vacs = []
         for plat, limit in remaining_by_plat.items():
             result = await session.execute(
@@ -132,24 +139,19 @@ async def run_auto_apply(auto_mode: bool = False, min_score: float = 70):
                     Vacancy.ai_score >= effective_min_score,
                     Vacancy.id.notin_(failed_3plus),
                 )
-                .order_by(Vacancy.ai_score.desc())
+                .order_by(fmt_priority, Vacancy.ai_score.desc())
                 .limit(limit)
             )
             all_vacs.extend(result.scalars().all())
         # Mix platforms a bit: interleave
         vacancies = all_vacs
 
-    # Static cover letter — used for normal applies (no questions, no required letter).
-    # Saves ~2-3k AI tokens per apply. AI letters used only when Playwright fallback
-    # kicks in for vacancies with questionnaires.
-    STATIC_LETTER = (
-        "Заинтересовала ваша вакансия. Имею коммерческий опыт в роли "
-        "системного и бизнес-аналитика: сбор и анализ требований, "
-        "BPMN / UML, проектирование REST API и интеграций, SQL, постановка "
-        "задач разработчикам, приёмка результатов. Готов обсудить детали "
-        "и пройти интервью.\n\n"
-        "Контакты: i.egorov8080@gmail.com, tg https://t.me/egorov_analyst"
-    )
+    # Письмо собирается из шаблона с вариациями (render_letter) под каждую
+    # вакансию: каждое письмо чуть разное и упоминает название. Токены не
+    # тратятся. AI-письмо включается только в Playwright-fallback для вакансий
+    # с обязательным тестом/анкетой.
+    from app.parsers.letter_template import render_letter
+    STATIC_LETTER = render_letter()  # запасной вариант без названия
 
     # Глобальные ошибки (daily_limit, истёкший токен, нет резюме) одинаково
     # бьют по всем вакансиям платформы — нет смысла ретраить и засорять БД
@@ -161,7 +163,7 @@ async def run_auto_apply(auto_mode: bool = False, min_score: float = 70):
         if vacancy.platform in aborted_platforms:
             continue
         try:
-            letter = STATIC_LETTER
+            letter = render_letter(vacancy.title)
 
             # HH через OAuth API (быстро, обходит DDoS Guard)
             result = False

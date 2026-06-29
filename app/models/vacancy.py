@@ -35,6 +35,7 @@ class Vacancy(Base, TimestampMixin):
     salary_currency: Mapped[str | None] = mapped_column(String(10))
     location: Mapped[str | None] = mapped_column(String(300))
     is_remote: Mapped[bool] = mapped_column(Boolean, default=False)
+    work_format: Mapped[str | None] = mapped_column(String(20))  # remote | hybrid | office
     experience: Mapped[str | None] = mapped_column(String(100))
     employment_type: Mapped[str | None] = mapped_column(String(100))
     skills: Mapped[str | None] = mapped_column(Text)  # JSON array as text
