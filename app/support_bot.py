@@ -63,7 +63,13 @@ async def main():
     @dp.message()
     async def from_user(message: Message):
         if str(message.chat.id) == admin:
-            return  # админ без reply — игнор
+            # админ написал без Reply — подсказываем, как отвечать
+            await message.answer(
+                "ℹ️ Чтобы ответить пользователю, сделай <b>Ответить (Reply)</b> на его "
+                "сообщение (свайп по сообщению или ПКМ → «Ответить») и напиши текст.",
+                parse_mode="HTML",
+            )
+            return
         u = message.from_user
         uname = f" @{u.username}" if u and u.username else ""
         name = u.full_name if u else "?"
