@@ -171,8 +171,11 @@ async def main():
         except Exception as e:
             log.warning("tg_userbot_init_failed", error=str(e))
 
-    # Run userbot init in background so it doesn't block aiogram polling
-    asyncio.create_task(_start_userbot_bg())
+    # Старый глобальный userbot (один общий аккаунт из .env) — только для
+    # single-режима. В multi его заменяет пер-юзерный UserBotManager, иначе
+    # один входящий ЛС уходил бы дважды и два клиента делили бы сессию.
+    if settings.mode != "multi":
+        asyncio.create_task(_start_userbot_bg())
 
     # Тихий старт: без спама-карточкой при каждом рестарте (только в лог).
     log.info("service_started", mode=settings.mode,

@@ -111,6 +111,11 @@ class UserBotManager:
         session_str = client.session.save()
         me = await client.get_me()
         uname = getattr(me, "username", None)
+        # Сначала запускаем слушатель, и только при успехе помечаем активным —
+        # иначе в БД был бы active=True без работающего клиента (рассинхрон).
+        self._pending.pop(user_id, None)
+        self._attach_and_run(user_id, client, me.id)
+        self._clients[user_id] = client
         async with async_session() as session:
             u = await session.get(User, user_id)
             if u:
@@ -119,10 +124,6 @@ class UserBotManager:
                 u.tg_session = session_str
                 u.tg_userbot_active = True
                 await session.commit()
-        self._pending.pop(user_id, None)
-        # Клиент уже авторизован — навешиваем обработчик и оставляем работать.
-        self._attach_and_run(user_id, client, me.id)
-        self._clients[user_id] = client
         return {"status": "ok", "username": uname}
 
     # ── Слушатель ───────────────────────────────────────────────────────
@@ -182,6 +183,16 @@ class UserBotManager:
             log.info("userbot_disconnected", user_id=user_id, error=str(e)[:80])
         finally:
             self._clients.pop(user_id, None)
+        # Авто-reconnect: если пользователь не отключал пересылку — переподнять.
+        async with async_session() as session:
+            u = await session.get(User, user_id)
+            still_active = bool(u and u.tg_userbot_active and u.tg_session)
+        if still_active:
+            await asyncio.sleep(30)
+            try:
+                await self.start_for_user(user_id)
+            except Exception as e:
+                log.warning("userbot_reconnect_failed", user_id=user_id, error=str(e)[:120])
 
     async def _forward(self, owner_id: int, name: str, uname: str, text: str) -> None:
         if not self._bot:
