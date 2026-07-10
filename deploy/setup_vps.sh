@@ -33,7 +33,7 @@ useradd -m -s /bin/bash jobhunter || true
 # Clone repo
 cd /opt
 if [ ! -d "job-hunter" ]; then
-    git clone https://github.com/egorov8080/hh-avtootkliki.git
+    git clone https://github.com/s1rry/hhautoapply.git
 fi
 cd job-hunter
 

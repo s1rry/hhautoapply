@@ -29,7 +29,7 @@
    - Linux и VPS: установи Docker Engine (`curl -fsSL https://get.docker.com | sh`).
 2. Склонируй проект и подготовь конфиг:
    ```bash
-   git clone https://github.com/egorov8080/hh-avtootkliki.git
+   git clone https://github.com/s1rry/hhautoapply.git
    cd job-hunter
    cp .env.example .env
    ```
@@ -52,7 +52,7 @@
 brew install python@3.12 postgresql@16 redis
 brew services start postgresql@16
 brew services start redis
-git clone https://github.com/egorov8080/hh-avtootkliki.git
+git clone https://github.com/s1rry/hhautoapply.git
 cd job-hunter
 python3.12 -m venv .venv
 .venv/bin/pip install -e .
@@ -67,7 +67,7 @@ cp .env.example .env   # заполни ключи
 2. Установи Postgres и Redis (или Memurai вместо Redis).
 3. В PowerShell:
    ```powershell
-   git clone https://github.com/egorov8080/hh-avtootkliki.git
+   git clone https://github.com/s1rry/hhautoapply.git
    cd job-hunter
    py -3.12 -m venv .venv
    .venv\Scripts\pip install -e .
@@ -82,7 +82,7 @@ cp .env.example .env   # заполни ключи
 ```bash
 sudo apt update
 sudo apt install -y python3.12 python3.12-venv git postgresql redis-server
-git clone https://github.com/egorov8080/hh-avtootkliki.git
+git clone https://github.com/s1rry/hhautoapply.git
 cd job-hunter
 python3.12 -m venv .venv
 .venv/bin/pip install -e .

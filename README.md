@@ -157,7 +157,7 @@ app/
 ## Запуск (VPS Ubuntu 22.04)
 
 ```bash
-git clone https://github.com/egorov8080/hh-avtootkliki.git /opt/job-hunter
+git clone https://github.com/s1rry/hhautoapply.git /opt/job-hunter
 cd /opt/job-hunter
 python3.12 -m venv .venv
 .venv/bin/pip install -e .

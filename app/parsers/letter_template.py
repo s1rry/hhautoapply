@@ -15,6 +15,8 @@ from __future__ import annotations
 import random
 import re
 
+from app.config import settings
+
 _CHOICE_RE = re.compile(r"\{([^{}]+)\}")
 
 DEFAULT_TEMPLATE = (
@@ -26,8 +28,8 @@ DEFAULT_TEMPLATE = (
     "и интеграций, SQL, постановка задач разработчикам, приёмка результатов. "
     "{Готов обсудить детали и пройти интервью.|"
     "Буду рад обсудить детали на интервью.|"
-    "Готов подробнее рассказать о своём опыте на собеседовании.}\n\n"
-    "Контакты: REDACTED, tg https://t.me/REDACTED"
+    "Готов подробнее рассказать о своём опыте на собеседовании.}"
+    "%(contacts)s"
 )
 
 
@@ -43,4 +45,8 @@ def render_letter(vacancy_name: str = "", template: str | None = None) -> str:
     suffix = f" «{name}»" if name else ""
     text = text.replace("%(vacancy_suffix)s", suffix)
     text = text.replace("%(vacancy_name)s", name)
-    return text
+    # Контакты берутся из настроек (в мультиюзере — из профиля пользователя).
+    # Если не заданы, строка контактов просто опускается.
+    contacts = (settings.contacts or "").strip()
+    text = text.replace("%(contacts)s", f"\n\nКонтакты: {contacts}" if contacts else "")
+    return text.rstrip()
