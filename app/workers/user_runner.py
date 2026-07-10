@@ -79,6 +79,10 @@ async def run_user_cycle(user_id: int) -> int:
             return 0
         st = user.get_settings()
         resume_text = user.resume_text or ""
+        # Без ключевых слов hh вернёт всё подряд — не откликаемся во избежание спама.
+        if not (st.search_text or "").strip():
+            log.info("user_no_keywords_skip", user_id=user.id)
+            return 0
         if not _within_window(st.apply_hour_start, st.apply_hour_end):
             return 0
         remaining = st.daily_limit - await _sent_today(session, user.id)

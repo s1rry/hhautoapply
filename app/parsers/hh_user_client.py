@@ -119,6 +119,19 @@ class HHUserClient:
             log.warning("user_search_error", error=str(e))
         return []
 
+    async def bump_resume(self) -> bool:
+        """Поднять резюме на hh (POST /resumes/{id}/publish). 204 = успех, 429 = рано."""
+        if not self.resume_id or not await self.ensure_token():
+            return False
+        headers = {"Authorization": f"Bearer {self.access_token}", "User-Agent": UA}
+        try:
+            async with httpx.AsyncClient(timeout=15) as c:
+                r = await c.post(f"{API}/resumes/{self.resume_id}/publish", headers=headers)
+            return r.status_code in (200, 204)
+        except Exception as e:
+            log.warning("bump_resume_error", error=str(e))
+            return False
+
     async def apply(self, vacancy_id: str, message: str = "") -> tuple[bool | str, dict]:
         """Откликнуться на вакансию токеном пользователя."""
         if not self.resume_id:

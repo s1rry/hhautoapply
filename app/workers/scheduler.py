@@ -98,8 +98,39 @@ class WorkerScheduler:
             except Exception as e:
                 log.error("user_cycle_failed", user_id=uid, error=str(e))
 
+    async def _job_bump_users(self):
+        """Мультиюзер: поднять резюме активным пользователям (у кого включено)."""
+        from sqlalchemy import select
+        from app.database import async_session
+        from app.models.user import User
+        from app.parsers.hh_user_client import HHUserClient
+
+        async with async_session() as session:
+            users = (await session.execute(
+                select(User).where(User.is_active.is_(True), User.hh_connected.is_(True))
+            )).scalars().all()
+            targets = [(u.id, u.hh_access_token, u.hh_refresh_token or "", u.hh_resume_id,
+                        u.hh_token_expires.timestamp() if u.hh_token_expires else 0.0)
+                       for u in users if u.get_settings().resume_bump and u.hh_resume_id]
+        for uid, at, rt, rid, exp in targets:
+            try:
+                client = HHUserClient(at, rt, rid, exp)
+                ok = await client.bump_resume()
+                if client.new_token:
+                    async with async_session() as session:
+                        u = await session.get(User, uid)
+                        if u:
+                            u.hh_access_token = client.new_token["access_token"]
+                            u.hh_refresh_token = client.new_token["refresh_token"]
+                            from datetime import datetime as _dt, timezone as _tz
+                            u.hh_token_expires = _dt.fromtimestamp(client.new_token["expires_at"], tz=_tz.utc)
+                            await session.commit()
+                log.info("resume_bumped", user_id=uid, ok=ok)
+            except Exception as e:
+                log.warning("resume_bump_failed", user_id=uid, error=str(e))
+
     def _start_multi(self, interval: int):
-        """Планировщик мультиюзерного режима: один общий цикл по пользователям."""
+        """Планировщик мультиюзерного режима: цикл откликов + поднятие резюме."""
         from datetime import datetime, timedelta
         self.scheduler.add_job(
             self._job_all_users,
@@ -111,6 +142,17 @@ class WorkerScheduler:
             max_instances=1,
             misfire_grace_time=60,
             next_run_time=datetime.now(MSK) + timedelta(seconds=30),
+        )
+        self.scheduler.add_job(
+            self._job_bump_users,
+            "interval",
+            hours=4,
+            id="multi_bump",
+            name="Поднятие резюме (мультиюзер)",
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=120,
+            next_run_time=datetime.now(MSK) + timedelta(minutes=3),
         )
         self.scheduler.start()
         log.info("scheduler_started_multi", interval=interval)

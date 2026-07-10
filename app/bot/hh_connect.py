@@ -109,7 +109,7 @@ async def connect_code(message: Message, state: FSMContext, **kw):
     ) if token.get("expires_at") else None
 
     # Подтягиваем резюме
-    resume_id, resume_text = await fetch_resume(token["access_token"])
+    resume_id, resume_text, resume_title = await fetch_resume(token["access_token"])
 
     async with async_session() as session:
         user = await get_or_create_user(
@@ -123,6 +123,11 @@ async def connect_code(message: Message, state: FSMContext, **kw):
             user.hh_resume_id = resume_id
         if resume_text:
             user.resume_text = resume_text
+        # Ключевые слова по умолчанию — из заголовка резюме (чтобы не откликаться на всё подряд)
+        st = user.get_settings()
+        if not (st.search_text or "").strip() and resume_title:
+            st.search_text = resume_title
+            user.set_settings(st)
         await session.commit()
 
     if resume_id:

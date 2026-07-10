@@ -66,6 +66,7 @@ class UserSettings(BaseModel):
     letter_mode: str = "always"
 
     # --- Автоотклик ---
+    resume_bump: bool = True             # авто-поднятие резюме на hh (раз в ~4ч)
     daily_limit: int = 50                # лимит откликов в день (free=50, paid выше)
     # Окно откликов по МСК (по умолчанию 9-21, настраивается).
     apply_hour_start: int = 9
