@@ -174,15 +174,9 @@ async def main():
     # Run userbot init in background so it doesn't block aiogram polling
     asyncio.create_task(_start_userbot_bg())
 
-    await notify_telegram(
-        bot,
-        "🚀 <b>Job Hunter запущен!</b>\n\n"
-        f"Позиция: {settings.desired_position}\n"
-        f"Зарплата: {settings.desired_salary_min:,}–{settings.desired_salary_max:,}\n"
-        f"Интервал: {settings.check_interval_sec // 60} мин\n"
-        f"Лимит: {settings.max_applies_per_day} откликов/день\n"
-        f"Режим: {'Playwright' if playwright_ok else 'API-only'}",
-    )
+    # Тихий старт: без спама-карточкой при каждом рестарте (только в лог).
+    log.info("service_started", mode=settings.mode,
+             engine="playwright" if playwright_ok else "api_only")
 
     # Wait for proxy connectivity before starting polling
     if settings.tg_proxy:
