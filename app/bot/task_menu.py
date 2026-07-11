@@ -793,13 +793,38 @@ _PROMPTS = {
 }
 
 
+CLEARABLE_FIELDS = {"ai_custom_prompt", "custom_letter", "contact", "excluded_text"}
+
+
 @router.callback_query(F.data.startswith("task:input:"))
 async def cb_input(cb: CallbackQuery, state: FSMContext, **kw):
     field = cb.data.split(":")[2]
     await state.set_state(TaskInput.value)
     await state.update_data(field=field)
-    await cb.message.answer(_PROMPTS.get(field, "Пришли значение:") + "\n\nОтмена: /task", parse_mode="HTML")
+    kb = None
+    if field in CLEARABLE_FIELDS:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Сбросить (стандартный)", callback_data=f"task:clear:{field}")]
+        ])
+    await cb.message.answer(_PROMPTS.get(field, "Пришли значение:") + "\n\nОтмена: /task",
+                            reply_markup=kb, parse_mode="HTML")
     await cb.answer()
+
+
+@router.callback_query(F.data.startswith("task:clear:"))
+async def cb_clear(cb: CallbackQuery, state: FSMContext, **kw):
+    field = cb.data.split(":")[2]
+    await state.clear()
+    async with async_session() as session:
+        user = await _load(session, cb)
+        s = user.get_settings()
+        if hasattr(s, field):
+            setattr(s, field, "")
+            user.set_settings(s)
+            await session.commit()
+        active, s2 = user.is_active, user.get_settings()
+    await cb.answer("Сброшено на стандартный")
+    await _show_main(cb, s2, active)
 
 
 @router.message(TaskInput.value)
