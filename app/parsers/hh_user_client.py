@@ -177,9 +177,10 @@ class HHUserClient:
                     r = await c.get(
                         f"{API}/negotiations",
                         headers=headers,
-                        params={"page": page, "per_page": 100, "order_by": "updated"},
+                        params={"page": page, "per_page": 100, "status": "active"},
                     )
                     if r.status_code != 200:
+                        log.warning("negotiations_get_failed", status=r.status_code, body=r.text[:200])
                         break
                     data = r.json() or {}
                     items = data.get("items") or []
