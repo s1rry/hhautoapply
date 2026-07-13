@@ -140,7 +140,8 @@ class HHUserClient:
         """Скрыть отклики со статусом «отказ» (discard) в списке откликов hh.
 
         Возвращает {"hidden": N, "checked": M}. hh помечает отказ работодателя
-        state.id == 'discard'; DELETE /negotiations/{id} убирает его из списка.
+        state.id == 'discard'; убираем через DELETE /negotiations/active/{id}
+        (как в hh-applicant-tool — этот эндпоинт реально работает по токену).
         """
         if not await self.ensure_token():
             return {"hidden": 0, "checked": 0, "error": "no_token"}
@@ -168,7 +169,7 @@ class HHUserClient:
                         nid = str(it.get("id") or "")
                         if not nid:
                             continue
-                        dr = await c.delete(f"{API}/negotiations/{nid}", headers=headers)
+                        dr = await c.delete(f"{API}/negotiations/active/{nid}", headers=headers)
                         if dr.status_code in (200, 204):
                             hidden += 1
                     if page + 1 >= (data.get("pages") or 1):
