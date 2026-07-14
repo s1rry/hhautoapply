@@ -67,7 +67,7 @@ SOURCE_LABELS = {"keyword": "по ключу", "recommended": "рекоменд�
 SOURCE_CYCLE = {"keyword": "recommended", "recommended": "both", "both": "keyword"}
 
 BTN_TASK = "📋 Задачи"
-BTN_STATS = "📊 Статистика"
+BTN_STATS = "📊 Общая"
 BTN_SETTINGS = "⚙️ Настройки"
 BTN_SUPPORT = "🆘 Поддержка"
 BTN_PROJECTS = "🚀 Другие проекты"
@@ -270,8 +270,9 @@ def _task_card_kb(t, tasks) -> InlineKeyboardMarkup:
         [b(text=("⏸ Остановить" if t.is_active else "▶️ Запустить"), callback_data=f"task:atgl:{t.id}"),
          b(text="🗑 Удалить", callback_data=f"task:del:{t.id}")],
         [b(text="⚙️ Настройки", callback_data=f"task:settings:{t.id}")],
-        [b(text="📊 Статистика", callback_data=f"task:tstat:{t.id}"),
-         b(text="⬅️ К списку", callback_data="task:list")],
+        [b(text="📊 По задаче", callback_data=f"task:tstat:{t.id}"),
+         b(text="➕ Новая задача", callback_data="task:newtask")],
+        [b(text="⬅️ К списку задач", callback_data="task:list")],
     ])
 
 
@@ -731,7 +732,7 @@ async def btn_stats(message: Message, **kw):
         return round(n / processed * 100) if processed else 0
 
     lines = [
-        "📊 <b>Статистика</b>\n",
+        "📊 <b>Общая статистика</b> (по всем задачам)\n",
         f"Всего обработано вакансий: <b>{processed}</b>",
         f"Сегодня отправлено: <b>{today}</b> · Автоотклик: <b>{'работает' if active else 'остановлен'}</b>\n",
         f"✅ Отправлено откликов: <b>{sent}</b> ({pct(sent)}%)",
