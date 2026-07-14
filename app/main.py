@@ -48,6 +48,10 @@ async def init_db():
                     "settings_json": "TEXT",
                     "rec_found": "INTEGER",
                     "last_run_at": "VARCHAR(32)",
+                    "invites": "INTEGER",
+                    "invites_today": "INTEGER",
+                    "views": "INTEGER",
+                    "views_today": "INTEGER",
                 },
             }
             for table, add in migrations.items():

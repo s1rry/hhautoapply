@@ -283,9 +283,12 @@ async def _show_task_card(target, session, t, edit=False):
     today, total = await _task_sent_counts(session, t.id)
     idx = next((i for i, x in enumerate(tasks) if x.id == t.id), 0)
     src = SOURCE_LABELS.get(getattr(s, "vacancy_source", "keyword"), "по ключу")
+    inv, inv_t = getattr(t, "invites", 0) or 0, getattr(t, "invites_today", 0) or 0
+    views, views_t = getattr(t, "views", 0) or 0, getattr(t, "views_today", 0) or 0
     lines = [
         f"{'🟢' if t.is_active else '🔴'} <b>{t.keyword}</b>\n",
         f"📊 Откликов сегодня: <b>{today}</b> из {s.daily_limit} · всего: <b>{total}</b>",
+        f"📨 Приглашений: <b>{inv}</b> (сегодня {inv_t}) · 👀 Просмотров: <b>{views}</b>",
         f"🕒 Часы: <b>{s.apply_hour_start}:00–{s.apply_hour_end}:00 МСК</b>",
         f"🧭 Источник: <b>{src}</b>",
     ]

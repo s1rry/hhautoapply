@@ -160,6 +160,69 @@ async def _save_refreshed_token(ctx: dict, new_token: dict) -> None:
                 await session.commit()
 
 
+async def _refresh_negotiations(user_id: int, ctx: dict) -> None:
+    """Воронка по задачам из hh /negotiations: приглашения и просмотры (всего/сегодня).
+    Считаем по последним откликам, мапим вакансию → задачу, пишем в SearchTask."""
+    from datetime import timezone, timedelta
+    from app.models.search_task import SearchTask
+    client = HHUserClient(
+        access_token=ctx["access_token"], refresh_token=ctx["refresh_token"],
+        resume_id=ctx["resume_id"], expires_at=ctx["expires_at"],
+    )
+    msk_today = (datetime.now(timezone.utc) + timedelta(hours=3)).date().isoformat()
+    by_vac: dict[str, dict] = {}
+    for page in range(5):
+        items, found, pages = await client.negotiations(100, page)
+        if client.new_token:
+            await _save_refreshed_token(ctx, client.new_token)
+        if not items:
+            break
+        for it in items:
+            vid = str((it.get("vacancy") or {}).get("id") or "")
+            if not vid:
+                continue
+            state = (it.get("state") or {}).get("id")
+            upd = (it.get("updated_at") or it.get("created_at") or "")[:10]
+            by_vac[vid] = {"invited": state == "invitation",
+                           "viewed": bool(it.get("viewed_by_opponent")),
+                           "today": upd == msk_today}
+        if page >= max(pages - 1, 0):
+            break
+
+    async with async_session() as session:
+        vac_task: dict[str, int] = {}
+        if by_vac:
+            rows = (await session.execute(
+                select(Vacancy.external_id, Vacancy.search_task_id).where(
+                    Vacancy.user_id == user_id, Vacancy.platform == "hh",
+                    Vacancy.external_id.in_(list(by_vac.keys())))
+            )).all()
+            for ext, tid in rows:
+                if tid and ext not in vac_task:
+                    vac_task[ext] = tid
+        agg: dict[int, dict] = {}
+        for vid, d in by_vac.items():
+            tid = vac_task.get(vid)
+            if not tid:
+                continue
+            a = agg.setdefault(tid, {"inv": 0, "inv_t": 0, "vw": 0, "vw_t": 0})
+            if d["invited"]:
+                a["inv"] += 1
+                a["inv_t"] += 1 if d["today"] else 0
+            if d["viewed"]:
+                a["vw"] += 1
+                a["vw_t"] += 1 if d["today"] else 0
+        tasks = (await session.execute(
+            select(SearchTask).where(SearchTask.user_id == user_id))).scalars().all()
+        for t in tasks:
+            a = agg.get(t.id)
+            t.invites = a["inv"] if a else 0
+            t.invites_today = a["inv_t"] if a else 0
+            t.views = a["vw"] if a else 0
+            t.views_today = a["vw_t"] if a else 0
+        await session.commit()
+
+
 async def run_user_cycle(user_id: int) -> int:
     """Цикл автоотклика пользователя по всем его аккаунтам. Число новых откликов."""
     async with async_session() as session:
@@ -194,6 +257,12 @@ async def run_user_cycle(user_id: int) -> int:
             total += await run_account_cycle(user_id, ctx, tasks)
         except Exception as e:
             log.error("account_cycle_error", user_id=user_id, ref=ctx["ref"], error=str(e))
+    # Воронка (приглашения/просмотры) по основному аккаунту — раз за цикл.
+    if contexts:
+        try:
+            await _refresh_negotiations(user_id, contexts[0])
+        except Exception as e:
+            log.warning("negotiations_refresh_failed", user_id=user_id, error=str(e))
     log.info("user_cycle_done", user_id=user_id, applied=total, accounts=len(contexts))
     return total
 

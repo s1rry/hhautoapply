@@ -154,6 +154,25 @@ class HHUserClient:
             log.warning("user_recommend_error", error=str(e))
         return []
 
+    async def negotiations(self, per_page: int = 100, page: int = 0) -> tuple[list[dict], int, int]:
+        """Отклики пользователя (GET /negotiations). Возвращает (items, found, pages).
+        В items у каждого есть state (id: response/invitation/discard),
+        viewed_by_opponent, vacancy.id, updated_at — из них считаем приглашения/просмотры."""
+        if not await self.ensure_token():
+            return [], 0, 0
+        headers = {"Authorization": f"Bearer {self.access_token}", "User-Agent": UA}
+        try:
+            async with httpx.AsyncClient(timeout=20) as c:
+                r = await c.get(f"{API}/negotiations", headers=headers,
+                                params={"per_page": per_page, "page": page})
+            if r.status_code == 200:
+                data = r.json() or {}
+                return data.get("items") or [], data.get("found") or 0, data.get("pages") or 0
+            log.warning("user_negotiations_failed", status=r.status_code, body=r.text[:200])
+        except Exception as e:
+            log.warning("user_negotiations_error", error=str(e))
+        return [], 0, 0
+
     async def bump_resume(self) -> bool:
         """Поднять резюме на hh (POST /resumes/{id}/publish). 204 = успех, 429 = рано."""
         if not self.resume_id or not await self.ensure_token():

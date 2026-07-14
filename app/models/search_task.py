@@ -32,6 +32,11 @@ class SearchTask(Base, TimestampMixin):
     # и когда был последний прогон.
     rec_found: Mapped[int | None] = mapped_column()
     last_run_at: Mapped[str | None] = mapped_column(String(32))
+    # Кэш воронки по задаче (из hh /negotiations, обновляется в цикле).
+    invites: Mapped[int | None] = mapped_column()
+    invites_today: Mapped[int | None] = mapped_column()
+    views: Mapped[int | None] = mapped_column()
+    views_today: Mapped[int | None] = mapped_column()
 
     def get_settings(self):
         """Настройки этой задачи (UserSettings). Пустой JSON → дефолты."""
