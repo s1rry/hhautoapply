@@ -234,17 +234,32 @@ async def run_account_cycle(user_id: int, ctx: dict, tasks: list[dict]) -> int:
         applied = 0
         seen = 0
         stop = False
-        for page in range(MAX_SEARCH_PAGES):
-            if applied >= remaining:
+        # Источник вакансий: ключ задачи и/или лента рекомендаций hh под резюме.
+        src_mode = getattr(st, "vacancy_source", "keyword")
+        sources: list[str] = []
+        if src_mode in ("keyword", "both") and phrase:
+            sources.append("keyword")
+        if src_mode in ("recommended", "both") and resume_id:
+            sources.append("recommended")
+        if not sources:  # нет ключа или нет резюме — берём что доступно
+            sources = ["keyword"] if phrase else (["recommended"] if resume_id else [])
+        exhausted: set[str] = set()
+        for source, page in [(s, p) for s in sources for p in range(MAX_SEARCH_PAGES)]:
+            if stop or applied >= remaining:
                 break
-            params = dict(base_params)
-            if phrase:
+            if source in exhausted:
+                continue
+            if source == "keyword":
+                params = dict(base_params)
                 params["text"] = phrase
-            items = await client.search(params, per_page=50, page=page)
+                items = await client.search(params, per_page=50, page=page)
+            else:
+                items = await client.similar_vacancies(resume_id, per_page=50, page=page)
             if client.new_token:
                 await _save_refreshed_token(ctx, client.new_token)
             if not items:
-                break
+                exhausted.add(source)  # лента кончилась — не долбим пустые страницы
+                continue
             for item in items:
                 if applied >= remaining:
                     break
@@ -254,6 +269,11 @@ async def run_account_cycle(user_id: int, ctx: dict, tasks: list[dict]) -> int:
                     continue
                 title = item.get("name") or ""
                 url = (item.get("alternate_url") or f"https://hh.ru/vacancy/{vid}")
+
+                # hh сам помечает вакансии, где уже был отклик/отказ (relations) —
+                # не тратим на них отклик (особенно важно для ленты рекомендаций).
+                if item.get("relations"):
+                    continue
 
                 # Слова-исключения: отсеиваем по названию + сниппету (на своей стороне).
                 if excluded:

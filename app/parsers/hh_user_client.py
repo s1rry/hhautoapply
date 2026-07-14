@@ -124,6 +124,32 @@ class HHUserClient:
             log.warning("user_search_error", error=str(e))
         return []
 
+    async def similar_vacancies(self, resume_id: str, per_page: int = 50, page: int = 0,
+                                params: dict | None = None) -> list[dict]:
+        """Рекомендованные вакансии под резюме (GET /resumes/{id}/similar_vacancies).
+        Персональная лента hh — большая и обновляется сама, в отличие от узкого
+        поиска по ключу. Возвращает items той же формы, что и search."""
+        if not resume_id or not await self.ensure_token():
+            return []
+        q = dict(params or {})
+        q["per_page"] = per_page
+        q["page"] = page
+        headers = {"Authorization": f"Bearer {self.access_token}", "User-Agent": UA}
+        try:
+            async with httpx.AsyncClient(timeout=20) as c:
+                r = await c.get(f"{API}/resumes/{resume_id}/similar_vacancies",
+                                headers=headers, params=q)
+            if r.status_code == 200:
+                data = r.json() or {}
+                items = data.get("items") or []
+                log.info("user_recommend_ok", resume=resume_id, page=page,
+                         found=data.get("found"), items=len(items))
+                return items
+            log.warning("user_recommend_failed", status=r.status_code, body=r.text[:200])
+        except Exception as e:
+            log.warning("user_recommend_error", error=str(e))
+        return []
+
     async def bump_resume(self) -> bool:
         """Поднять резюме на hh (POST /resumes/{id}/publish). 204 = успех, 429 = рано."""
         if not self.resume_id or not await self.ensure_token():

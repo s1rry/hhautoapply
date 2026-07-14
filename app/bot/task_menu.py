@@ -62,6 +62,10 @@ def _limit_cap(user) -> int:
 
 LETTER_MODES = {"always": "всегда", "required": "только где требуется", "off": "без писем"}
 
+# Источник вакансий для задачи.
+SOURCE_LABELS = {"keyword": "по ключу", "recommended": "рекомендации", "both": "ключ + рекомендации"}
+SOURCE_CYCLE = {"keyword": "recommended", "recommended": "both", "both": "keyword"}
+
 BTN_TASK = "📋 Задачи"
 BTN_STATS = "📊 Статистика"
 BTN_SETTINGS = "⚙️ Настройки"
@@ -209,6 +213,8 @@ def _task_kb(t, s: UserSettings) -> InlineKeyboardMarkup:
            callback_data=f"task:atgl:{t.id}")],
         [b(text=f"📄 Резюме: {(t.resume_title or 'аккаунта')[:26]}",
            callback_data=f"task:res:{t.id}")],
+        [b(text=f"🧭 Источник: {SOURCE_LABELS.get(getattr(s, 'vacancy_source', 'keyword'), 'по ключу')}",
+           callback_data="task:source")],
         [b(text=f"🎯 Умный отбор (ИИ): {('от ' + str(s.ai_score_min) + '%') if s.ai_score_enabled else 'выкл'}",
            callback_data="task:score")],
         [b(text="📍 Регион", callback_data="task:input:areas"),
@@ -1084,6 +1090,18 @@ async def cb_reconsider(cb: CallbackQuery, state: FSMContext, **kw):
         await session.commit()
     n = res.rowcount or 0
     await cb.answer(f"Возвращено в очередь: {n}", show_alert=True)
+
+
+@router.callback_query(F.data == "task:source")
+async def cb_source(cb: CallbackQuery, state: FSMContext, **kw):
+    async with async_session() as session:
+        holder, _, s = await _res(session, cb, state)
+        cur = getattr(s, "vacancy_source", "keyword")
+        s.vacancy_source = SOURCE_CYCLE.get(cur, "keyword")
+        holder.set_settings(s)
+        await session.commit()
+    await _render_home(cb, state, edit=True)
+    await cb.answer("Источник: " + SOURCE_LABELS.get(s.vacancy_source, s.vacancy_source))
 
 
 @router.callback_query(F.data == "task:score")
