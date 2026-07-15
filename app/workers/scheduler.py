@@ -100,35 +100,57 @@ class WorkerScheduler:
                 log.error("user_cycle_failed", user_id=uid, error=str(e))
 
     async def _job_bump_users(self):
-        """Мультиюзер: поднять резюме активным пользователям (у кого включено)."""
+        """Мультиюзер: поднять резюме там, где включено «Поднятие» — учитываем
+        per-task настройки (у каждой задачи своё резюме) + старый глобальный флаг."""
         from sqlalchemy import select
         from app.database import async_session
         from app.models.user import User
+        from app.models.search_task import SearchTask
         from app.parsers.hh_user_client import HHUserClient
+        from datetime import datetime as _dt, timezone as _tz
 
+        plan = []  # (uid, at, rt, exp, {resume_id, ...})
         async with async_session() as session:
             users = (await session.execute(
                 select(User).where(User.is_active.is_(True), User.hh_connected.is_(True))
             )).scalars().all()
-            targets = [(u.id, u.hh_access_token, u.hh_refresh_token or "", u.hh_resume_id,
-                        u.hh_token_expires.timestamp() if u.hh_token_expires else 0.0)
-                       for u in users if u.get_settings().resume_bump and u.hh_resume_id]
-        for uid, at, rt, rid, exp in targets:
-            try:
-                client = HHUserClient(at, rt, rid, exp)
-                ok = await client.bump_resume()
-                if client.new_token:
-                    async with async_session() as session:
-                        u = await session.get(User, uid)
-                        if u:
-                            u.hh_access_token = client.new_token["access_token"]
-                            u.hh_refresh_token = client.new_token["refresh_token"]
-                            from datetime import datetime as _dt, timezone as _tz
-                            u.hh_token_expires = _dt.fromtimestamp(client.new_token["expires_at"], tz=_tz.utc)
-                            await session.commit()
-                log.info("resume_bumped", user_id=uid, ok=ok)
-            except Exception as e:
-                log.warning("resume_bump_failed", user_id=uid, error=str(e))
+            for u in users:
+                if not u.hh_access_token:
+                    continue
+                resume_ids = set()
+                if u.get_settings().resume_bump and u.hh_resume_id:
+                    resume_ids.add(u.hh_resume_id)
+                tasks = (await session.execute(
+                    select(SearchTask).where(SearchTask.user_id == u.id, SearchTask.is_active.is_(True))
+                )).scalars().all()
+                for t in tasks:
+                    s = t.get_settings() if t.settings_json else u.get_settings()
+                    if getattr(s, "resume_bump", False):
+                        rid = t.resume_id or u.hh_resume_id
+                        if rid:
+                            resume_ids.add(rid)
+                if resume_ids:
+                    plan.append((u.id, u.hh_access_token, u.hh_refresh_token or "",
+                                 u.hh_token_expires.timestamp() if u.hh_token_expires else 0.0,
+                                 resume_ids))
+        for uid, at, rt, exp, resume_ids in plan:
+            for rid in resume_ids:
+                try:
+                    client = HHUserClient(at, rt, rid, exp)
+                    ok = await client.bump_resume()
+                    if client.new_token:
+                        at, rt = client.new_token["access_token"], client.new_token["refresh_token"]
+                        exp = client.new_token["expires_at"]
+                        async with async_session() as session:
+                            u = await session.get(User, uid)
+                            if u:
+                                u.hh_access_token = at
+                                u.hh_refresh_token = rt
+                                u.hh_token_expires = _dt.fromtimestamp(exp, tz=_tz.utc)
+                                await session.commit()
+                    log.info("resume_bumped", user_id=uid, resume=rid, ok=ok)
+                except Exception as e:
+                    log.warning("resume_bump_failed", user_id=uid, error=str(e))
 
     async def _job_daily_digest(self):
         """Вечерний дайджест (20:00 МСК): отправлено / приглашения / просмотры за день."""
