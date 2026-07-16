@@ -199,6 +199,49 @@ class WorkerScheduler:
                 except Exception as e:
                     log.warning("digest_send_failed", user_id=u.id, error=str(e))
 
+    async def _job_connect_reminders(self):
+        """Ре-энгейджмент: тем, кто зарегался, но не подключил hh — напомнить.
+        До 2 напоминаний: через ~3ч и через ~24ч после регистрации."""
+        from sqlalchemy import select
+        from datetime import datetime as _dt, timezone as _tz
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        from app.database import async_session
+        from app.models.user import User
+        if not self.bot:
+            return
+        now = _dt.now(_tz.utc)
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="🔗 Подключить hh.ru за 1 минуту", callback_data="connect:start")]])
+        async with async_session() as session:
+            users = (await session.execute(
+                select(User).where(User.hh_connected.is_(False), User.connect_reminders < 2)
+            )).scalars().all()
+            for u in users:
+                created = u.created_at
+                if created is None:
+                    continue
+                if created.tzinfo is None:  # SQLite отдаёт naive — трактуем как UTC
+                    created = created.replace(tzinfo=_tz.utc)
+                age_h = (now - created).total_seconds() / 3600
+                send = False
+                if u.connect_reminders == 0 and age_h >= 3:
+                    text = ("👋 Остался <b>один шаг</b>!\n\n"
+                            "Ты зашёл в бот автооткликов, но не подключил hh.ru — без этого "
+                            "бот не может откликаться за тебя. Это займёт минуту, пароль не нужен. Жми 👇")
+                    send = True
+                elif u.connect_reminders == 1 and age_h >= 24:
+                    text = ("🔔 Напоминаем: подключи hh.ru — и бот начнёт откликаться на вакансии "
+                            "сам, 24/7. Минута, без пароля. Жми 👇")
+                    send = True
+                if send:
+                    try:
+                        await self.bot.send_message(u.telegram_id, text, reply_markup=kb, parse_mode="HTML")
+                        u.connect_reminders += 1
+                    except Exception as e:
+                        log.warning("connect_reminder_failed", user_id=u.id, error=str(e))
+                        u.connect_reminders += 1  # не долбить недоступных
+            await session.commit()
+
     def _start_multi(self, interval: int):
         """Планировщик мультиюзерного режима: цикл откликов + поднятие резюме."""
         from datetime import datetime, timedelta
@@ -223,6 +266,19 @@ class WorkerScheduler:
             max_instances=1,
             misfire_grace_time=120,
             next_run_time=datetime.now(MSK) + timedelta(minutes=3),
+        )
+        # Ре-энгейджмент неподключённых — каждые 2 часа.
+        from datetime import datetime as _dt2, timedelta as _td2
+        self.scheduler.add_job(
+            self._job_connect_reminders,
+            "interval",
+            hours=2,
+            id="connect_reminders",
+            name="Напоминания подключить hh",
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=600,
+            next_run_time=_dt2.now(MSK) + _td2(minutes=5),
         )
         # Вечерний дайджест — каждый день в 20:00 МСК.
         self.scheduler.add_job(

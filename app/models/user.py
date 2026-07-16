@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, JSON, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -29,6 +29,8 @@ class User(Base, TimestampMixin):
 
     # hh-авторизация (per-user). TODO: шифровать токены at-rest.
     hh_connected: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Сколько напоминаний «подключи hh» отправлено (ре-энгейджмент неподключённых).
+    connect_reminders: Mapped[int] = mapped_column(Integer, default=0)
     hh_access_token: Mapped[str | None] = mapped_column(EncryptedText)
     hh_refresh_token: Mapped[str | None] = mapped_column(EncryptedText)
     hh_token_expires: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
