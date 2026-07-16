@@ -13,11 +13,11 @@ from __future__ import annotations
 import datetime
 
 import structlog
-from aiogram import Router
+from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery
 
 from app.database import async_session
 from app.parsers.hh_login import OTPLoginSession, get_session, set_session, drop_session
@@ -56,18 +56,32 @@ async def _is_cancel(message: Message, state: FSMContext) -> bool:
     return False
 
 
+CONNECT_PROMPT = (
+    "🔐 <b>Подключение hh.ru — 2 шага, ~1 минута</b>\n\n"
+    "1️⃣ Пришли номер телефона от аккаунта hh "
+    "(например <code>+79991234567</code>).\n"
+    "2️⃣ hh отправит тебе код (в приложение / СМС / почту) — введёшь его здесь.\n\n"
+    "🔒 Пароль <b>не нужен</b> — мы его не спрашиваем. Код приходит <b>тебе</b> от hh, "
+    "бот его не знает. Это безопасно.\n\n"
+    "Отмена: /cancel"
+)
+
+
+async def _start_connect(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer(CONNECT_PROMPT, parse_mode="HTML")
+    await state.set_state(ConnectSG.phone)
+
+
 @router.message(Command("connect"))
 async def cmd_connect(message: Message, state: FSMContext, **kw):
-    await state.clear()
-    await message.answer(
-        "🔐 <b>Подключение hh.ru</b>\n\n"
-        "Пришли номер телефона, привязанный к твоему аккаунту hh "
-        "(например <code>+79991234567</code>). hh отправит код тебе на телефон "
-        "или почту — введёшь его здесь. Пароль вводить не нужно.\n\n"
-        "Отмена: /cancel",
-        parse_mode="HTML",
-    )
-    await state.set_state(ConnectSG.phone)
+    await _start_connect(message, state)
+
+
+@router.callback_query(F.data == "connect:start")
+async def cb_connect_start(cb: CallbackQuery, state: FSMContext, **kw):
+    await _start_connect(cb.message, state)
+    await cb.answer()
 
 
 @router.message(ConnectSG.phone)
@@ -193,14 +207,23 @@ async def connect_code(message: Message, state: FSMContext, **kw):
         )
     elif resume_id:
         from app.bot.media import send_photo_or_text
+        from app.bot.task_menu import main_reply_kb
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        await state.clear()
         await send_photo_or_text(
             message, "apply",
-            "✅ <b>hh.ru подключён, резюме загружено.</b>\n\n"
-            "Теперь настрой задачу автоотклика — кнопка 📋 Задача (или /task).",
+            "✅ <b>hh.ru подключён, резюме загружено!</b>\n\n"
+            "Остался один шаг — создай задачу, и бот начнёт откликаться сам. Жми 👇",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="➕ Создать задачу автоотклика", callback_data="task:newtask")]]),
         )
+        await message.answer("Меню бота — кнопки внизу 👇", reply_markup=main_reply_kb())
     else:
+        from app.bot.task_menu import main_reply_kb
+        await state.clear()
         await message.answer(
             "✅ hh.ru подключён.\n"
             "⚠️ Не нашёл активного резюме на hh — создай/опубликуй резюме, "
-            "оно нужно для откликов. Настройки задачи: /task"
+            "оно нужно для откликов. Настройки задачи: /task",
+            reply_markup=main_reply_kb(),
         )

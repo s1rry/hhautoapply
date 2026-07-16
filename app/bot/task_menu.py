@@ -73,6 +73,12 @@ BTN_SUPPORT = "🆘 Поддержка"
 BTN_PROJECTS = "🚀 Другие проекты"
 
 
+def _connect_kb() -> InlineKeyboardMarkup:
+    """Кнопка запуска подключения hh (обрабатывает hh_connect: connect:start)."""
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🔗 Подключить hh.ru за 1 минуту", callback_data="connect:start")]])
+
+
 def main_reply_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -505,7 +511,7 @@ async def cb_task_resume(cb: CallbackQuery, state: FSMContext, **kw):
         user = await _load(session, cb)
         token = user.hh_access_token
     if not token:
-        await cb.message.answer("Сначала подключи hh: /connect")
+        await cb.message.answer("Сначала подключи hh.ru 👇", reply_markup=_connect_kb())
         return
     resumes = await list_resumes(token)
     if not resumes:
@@ -567,7 +573,7 @@ async def cb_newtask(cb: CallbackQuery, state: FSMContext, **kw):
     async with async_session() as session:
         user = await _load(session, cb)
         if not user.hh_connected or not user.hh_access_token:
-            await cb.message.answer("Сначала подключи hh: /connect")
+            await cb.message.answer("Сначала подключи hh.ru 👇", reply_markup=_connect_kb())
             return
         token = user.hh_access_token
     resumes = await list_resumes(token)
@@ -683,12 +689,10 @@ async def cmd_start(message: Message, state: FSMContext, **kw):
             "⚡️ Авто-отклики на hh.ru по твоим фильтрам\n"
             "✉️ Персональные сопроводительные письма (ИИ)\n"
             "📈 Авто-поднятие резюме\n"
-            "📊 Статистику откликов\n\n"
+            "📊 Статистику откликов и приглашений\n\n"
             "Сейчас бета-тест — бесплатно ❤️\n\n"
-            "<b>Как начать:</b>\n"
-            "1️⃣ Подключи hh.ru — /connect\n"
-            "2️⃣ Настрой задачу — кнопка 📋 Задача внизу",
-            reply_markup=main_reply_kb(),
+            "👇 Жми кнопку — подключим hh за минуту (пароль не нужен).",
+            reply_markup=_connect_kb(),
         )
     else:
         async with async_session() as session:
@@ -789,7 +793,7 @@ async def btn_settings(message: Message, state: FSMContext, **kw):
     async with async_session() as session:
         user = await _load(session, message)
         if not user.hh_connected:
-            await message.answer("🔗 hh.ru пока не подключён. Нажми /connect.")
+            await message.answer("🔗 hh.ru пока не подключён 👇", reply_markup=_connect_kb())
             return
         paid = user.is_paid
         resume_line = (user.resume_text.splitlines()[0] if user.resume_text else "")
@@ -925,7 +929,7 @@ async def cb_hide_rejections(cb: CallbackQuery, **kw):
     async with async_session() as session:
         user = await _load(session, cb)
         if not user.hh_connected or not user.hh_access_token:
-            await cb.message.answer("Сначала подключи hh: /connect")
+            await cb.message.answer("Сначала подключи hh.ru 👇", reply_markup=_connect_kb())
             return
         client = HHUserClient(
             access_token=user.hh_access_token,
@@ -975,7 +979,7 @@ async def cb_resumes(cb: CallbackQuery, **kw):
     async with async_session() as session:
         user = await _load(session, cb)
         if not user.hh_connected or not user.hh_access_token:
-            await cb.message.answer("Сначала подключи hh: /connect")
+            await cb.message.answer("Сначала подключи hh.ru 👇", reply_markup=_connect_kb())
             return
         token = user.hh_access_token
         current = user.hh_resume_id
@@ -1023,7 +1027,7 @@ async def cb_clone_resume(cb: CallbackQuery, **kw):
     async with async_session() as session:
         user = await _load(session, cb)
         if not user.hh_connected or not user.hh_access_token:
-            await cb.message.answer("Сначала подключи hh: /connect")
+            await cb.message.answer("Сначала подключи hh.ru 👇", reply_markup=_connect_kb())
             return
         client = HHUserClient(
             access_token=user.hh_access_token,
@@ -1121,7 +1125,8 @@ async def cb_toggle_active(cb: CallbackQuery, state: FSMContext, **kw):
     async with async_session() as session:
         user = await _load(session, cb)
         if not user.hh_connected:
-            await cb.answer("Сначала подключи hh: /connect", show_alert=True)
+            await cb.answer()
+            await cb.message.answer("Сначала подключи hh.ru 👇", reply_markup=_connect_kb())
             return
         if not user.is_active and not await active_keywords(session, user.id):
             await cb.answer("Сначала добавь хотя бы одну задачу — ➕ Новая задача.", show_alert=True)
