@@ -45,6 +45,24 @@ class ClaudeAI:
 
         # Persistent flag — once primary is exhausted we stick to fallback
         self.use_fallback = self._load_use_fallback()
+        # Пул бесплатных эндпоинтов для скоринга + указатель круговой ротации.
+        self.score_pool = self._parse_score_pool(settings.ai_score_pool)
+        self._pool_idx = 0
+
+    @staticmethod
+    def _parse_score_pool(raw: str) -> list[dict]:
+        """Разобрать AI_SCORE_POOL: "url|key|model" через ';'.
+
+        Пустые и кривые записи молча пропускаем: неверная строка в конфиге не
+        должна ронять бота — он просто отработает на платном провайдере.
+        """
+        pool: list[dict] = []
+        for chunk in (raw or "").split(";"):
+            parts = [p.strip() for p in chunk.split("|")]
+            if len(parts) >= 3 and all(parts[:3]):
+                pool.append({"base_url": parts[0].rstrip("/"),
+                             "api_key": parts[1], "model": parts[2]})
+        return pool
 
     def _load_use_fallback(self) -> bool:
         try:
@@ -83,10 +101,12 @@ class ClaudeAI:
         return ""
 
     async def _call_openai_compatible(self, system: str, user_message: str, max_tokens: int,
-                                      model: str | None = None) -> tuple[str, int, int]:
+                                      model: str | None = None,
+                                      base_url: str | None = None,
+                                      api_key: str | None = None) -> tuple[str, int, int]:
         """Вызов любого OpenAI-совместимого эндпоинта (OpenRouter/Cerebras/Mistral/…)."""
         headers = {
-            "Authorization": f"Bearer {settings.ai_api_key}",
+            "Authorization": f"Bearer {api_key or settings.ai_api_key}",
             "Content-Type": "application/json",
             # Браузерный UA — иначе Cloudflare-релеи (tonwave) отвечают 1010.
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -103,7 +123,8 @@ class ClaudeAI:
         # Прокси: явный ai_proxy, иначе tg_proxy (тот же SOCKS, что для Telegram).
         proxy = settings.ai_proxy or (settings.tg_proxy if (settings.tg_proxy or "").startswith("socks5") else "")
         async with httpx.AsyncClient(timeout=60, proxy=proxy or None) as c:
-            r = await c.post(f"{settings.ai_base_url}/chat/completions", headers=headers, json=payload)
+            r = await c.post(f"{base_url or settings.ai_base_url}/chat/completions",
+                             headers=headers, json=payload)
         r.raise_for_status()
         d = r.json()
         text = (d.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
@@ -216,6 +237,34 @@ class ClaudeAI:
             log.warning("ai_complete_failed", error=str(e))
             return ""
 
+    async def _score_call(self, system: str, user_msg: str) -> str | None:
+        """Скоринг по пулу: каждый вызов начинает со следующего ключа.
+
+        Ротация со сдвигом, а не всегда с первого, — иначе первый ключ выбирал
+        бы весь минутный лимит, а остальные простаивали. Все бесплатные легли —
+        уходим на основного платного, чтобы отклики не встали.
+        """
+        errors = []
+        for i in range(len(self.score_pool)):
+            ep = self.score_pool[(self._pool_idx + i) % len(self.score_pool)]
+            try:
+                text, _, _ = await self._call_openai_compatible(
+                    system, user_msg, max_tokens=800,
+                    model=ep["model"], base_url=ep["base_url"], api_key=ep["api_key"])
+                self._pool_idx = (self._pool_idx + i + 1) % len(self.score_pool)
+                return text
+            except Exception as e:
+                errors.append(f"{ep['base_url']}: {type(e).__name__}")
+        if errors:
+            log.warning("ai_score_pool_exhausted", tried=errors)
+        try:
+            text, _, _ = await self._call(system, user_msg, max_tokens=800,
+                                          model=(settings.ai_score_model or None))
+            return text
+        except Exception as e:
+            log.warning("ai_score_failed", error=str(e))
+            return None
+
     async def score_vacancy(self, vacancy_title: str, vacancy_description: str, resume: str) -> int | None:
         """Оценка соответствия вакансии резюме, 0–100. None — ИИ недоступен/не
         дал число (вызывающий решает: при строгом отборе такую вакансию лучше
@@ -231,12 +280,8 @@ class ClaudeAI:
             f"Резюме кандидата:\n{resume[:1500]}"
         )
         user_msg = f"Вакансия: {vacancy_title}\n\nОписание:\n{(vacancy_description or '')[:800]}"
-        try:
-            # Скоринг возвращает одно число — гоняем его на дешёвой модели.
-            text, _, _ = await self._call(system, user_msg, max_tokens=800,
-                                          model=(settings.ai_score_model or None))
-        except Exception as e:
-            log.warning("ai_score_failed", error=str(e))
+        text = await self._score_call(system, user_msg)
+        if text is None:
             return None
         m = re.search(r"\d{1,3}", text or "")
         if not m:
