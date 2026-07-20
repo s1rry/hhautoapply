@@ -48,7 +48,8 @@ MAX_SCORE_FAILS = 5
 
 async def _build_letter(item: dict, title: str, st, resume_text: str,
                         ab_index: int = 0,
-                        model: str | None = None) -> tuple[str, str | None]:
+                        model: str | None = None,
+                        full_desc: str = "") -> tuple[str, str | None]:
     """Собрать письмо. Возвращает (текст, вариант A/B|None).
       off      — без письма ("")
       required — письмо только если вакансия его требует
@@ -71,8 +72,13 @@ async def _build_letter(item: dict, title: str, st, resume_text: str,
             text += f"\n\nКонтакты: {contact}"
         return text, variant
     if st.ai_enabled and resume_text:
-        snip = item.get("snippet") or {}
-        desc = " ".join(x for x in (snip.get("responsibility"), snip.get("requirement")) if x)
+        # Полное описание (с возможными вопросами «ответьте в сопроводительном»)
+        # приоритетнее обрезанного сниппета. Обрезаем разумно, чтобы не раздуть вход.
+        if full_desc:
+            desc = full_desc[:2500]
+        else:
+            snip = item.get("snippet") or {}
+            desc = " ".join(x for x in (snip.get("responsibility"), snip.get("requirement")) if x)
         company = (item.get("employer") or {}).get("name") or ""
         try:
             text, _, _ = await claude_ai.generate_cover_letter(
@@ -541,9 +547,14 @@ async def run_account_cycle(user_id: int, ctx: dict, tasks: list[dict]) -> int:
                         log.info("user_vacancy_skipped_low_score", user_id=user_id, vid=vid, score=score)
                         continue
 
+                # Полное описание тянем только здесь — для вакансии, прошедшей
+                # отбор, и только если пишем ИИ-письмо (иначе лишний запрос).
+                full_desc = ""
+                if st.ai_enabled and resume_text and getattr(st, "letter_mode", "always") != "off":
+                    full_desc = await client.get_description(vid)
                 letter, letter_variant = await _build_letter(
                     item, title, st, resume_text, ab_index=applied,
-                    model=ctx.get("letter_model"))
+                    model=ctx.get("letter_model"), full_desc=full_desc)
                 try:
                     if item.get("has_test"):
                         # Вакансия с тестом: обычный API-отклик не пройдёт.

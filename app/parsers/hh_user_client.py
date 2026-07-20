@@ -197,6 +197,29 @@ class HHUserClient:
             log.warning("user_negotiations_error", error=str(e))
         return [], 0, 0
 
+    async def get_description(self, vacancy_id: str) -> str:
+        """Полный текст вакансии (GET /vacancies/{id}) без HTML.
+
+        Поиск отдаёт только обрезанный сниппет — а во многих вакансиях в
+        описании есть вопросы, на которые просят ответить в сопроводительном
+        («отклики без ответов не рассматриваются»). Без полного текста бот их
+        не видит и такой отклик отсеивают. Тянем описание только для вакансий,
+        прошедших отбор, — лишних запросов нет.
+        """
+        if not await self.ensure_token():
+            return ""
+        headers = {"Authorization": f"Bearer {self.access_token}", "User-Agent": UA}
+        try:
+            async with httpx.AsyncClient(timeout=20) as c:
+                r = await c.get(f"{API}/vacancies/{vacancy_id}", headers=headers)
+            if r.status_code == 200:
+                html = (r.json() or {}).get("description") or ""
+                return re.sub(r"<[^>]+>", " ", html).replace("&nbsp;", " ").strip()
+            log.warning("user_vacancy_desc_failed", vid=vacancy_id, status=r.status_code)
+        except Exception as e:
+            log.warning("user_vacancy_desc_error", vid=vacancy_id, error=str(e))
+        return ""
+
     async def bump_resume(self) -> bool:
         """Поднять резюме на hh (POST /resumes/{id}/publish). 204 = успех, 429 = рано."""
         if not self.resume_id or not await self.ensure_token():
