@@ -314,7 +314,74 @@ async def run_user_cycle(user_id: int) -> int:
     log.info("user_cycle_done", user_id=user_id, applied=total, accounts=len(contexts))
     if any(c.get("ai_down") for c in contexts):
         await _notify_ai_down(user_id)
+    for c in contexts:
+        if c.get("captcha_task") is not None:
+            await _notify_captcha(user_id, c.get("captcha_task") or "")
+            break
+    if any(c.get("token_revoked") for c in contexts):
+        await _notify_token_revoked(user_id)
     return total
+
+
+async def _notify_token_revoked(user_id: int) -> None:
+    """Доступ к hh отозван — без переподключения бот не работает совсем.
+
+    Раньше это была только строчка в логе: человек думал, что бот ищет
+    вакансии, а он не отправлял ничего.
+    """
+    async with async_session() as session:
+        user = await session.get(User, user_id)
+        if not user or not user.telegram_id:
+            return
+        if user.hh_connected:          # снимаем флаг: аккаунт больше не рабочий
+            user.hh_connected = False
+            await session.commit()
+    await _send_tg(
+        user.telegram_id,
+        "🔌 <b>Доступ к hh.ru отключён</b>\n\n"
+        "hh больше не принимает наш доступ к твоему аккаунту — так бывает "
+        "после смены пароля или выхода из всех устройств.\n\n"
+        "Отклики сейчас не отправляются. Чтобы продолжить, подключи аккаунт "
+        "заново — это минута и пароль не нужен 👇",
+        buttons=[[{"text": "🔗 Подключить заново", "callback_data": "connect:start"}]],
+    )
+
+
+async def _send_tg(chat_id, text: str, buttons: list | None = None) -> None:
+    """Отправить сообщение в Telegram напрямую (воркер живёт вне aiogram)."""
+    import httpx
+    token = settings.tg_bot_token
+    if not token:
+        return
+    payload = {"chat_id": str(chat_id), "text": text, "parse_mode": "HTML"}
+    if buttons:
+        payload["reply_markup"] = {"inline_keyboard": buttons}
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            await c.post(f"https://api.telegram.org/bot{token}/sendMessage", json=payload)
+    except Exception as e:
+        log.warning("tg_send_failed", chat_id=chat_id, error=str(e))
+
+
+async def _notify_captcha(user_id: int, task_name: str) -> None:
+    """hh просит капчу — просим пользователя пройти её на сайте.
+
+    Решать капчу за него нельзя: это обход антибот-защиты, и при обнаружении
+    банят его аккаунт, а не бота. Честнее остановиться и попросить минуту
+    внимания — задача продолжится сама на следующем цикле.
+    """
+    async with async_session() as session:
+        user = await session.get(User, user_id)
+    if not user or not user.telegram_id:
+        return
+    where = f" «{task_name}»" if task_name else ""
+    text = (f"🤖 <b>hh просит подтвердить, что ты не робот</b>\n\n"
+            f"Задача{where} поставлена на паузу — пройти проверку за тебя я не могу: "
+            f"это защита hh, и обход приведёт к блокировке твоего аккаунта.\n\n"
+            f"Что делать: зайди на <b>hh.ru</b> с телефона или компьютера, "
+            f"открой любую вакансию и пройди проверку — это займёт секунд десять.\n\n"
+            f"Дальше бот продолжит сам, ничего нажимать не нужно.")
+    await _send_tg(user.telegram_id, text)
 
 
 async def _notify_ai_down(user_id: int) -> None:
@@ -324,19 +391,11 @@ async def _notify_ai_down(user_id: int) -> None:
     тревожит сильнее, чем сама задержка. Отклики уже остановлены
     (fail-closed) — лучше не отправить ничего, чем откликаться без отбора.
     """
-    import httpx
-    token = settings.tg_bot_token
     admin = str(settings.tg_admin_chat_id or "")
-    if not token or not admin:
+    if not admin:
         return
-    text = (f"🔴 ИИ недоступен, отклики остановлены (user_id={user_id}). "
-            f"Проверь баланс провайдера.")
-    try:
-        async with httpx.AsyncClient(timeout=15) as c:
-            await c.post(f"https://api.telegram.org/bot{token}/sendMessage",
-                         json={"chat_id": admin, "text": text})
-    except Exception as e:
-        log.warning("ai_down_notify_failed", error=str(e))
+    await _send_tg(admin, f"🔴 ИИ недоступен, отклики остановлены (user_id={user_id}). "
+                          f"Проверь баланс провайдера.")
 
 
 async def run_account_cycle(user_id: int, ctx: dict, tasks: list[dict]) -> int:
@@ -515,6 +574,13 @@ async def run_account_cycle(user_id: int, ctx: dict, tasks: list[dict]) -> int:
                     log.error("user_apply_error", user_id=user_id, vid=vid, error=str(e))
                     continue
 
+                if info.get("error") == "captcha_required":
+                    log.warning("user_captcha_required", user_id=user_id, ref=ref,
+                                task_id=task_id)
+                    ctx["captcha_task"] = task.get("keyword") or ""
+                    stop = True
+                    break
+
                 if info.get("error") == "rate_limited":
                     # Не сдался и после повторов — притормаживаем весь аккаунт.
                     log.warning("user_rate_limit_giveup", user_id=user_id, ref=ref)
@@ -550,6 +616,8 @@ async def run_account_cycle(user_id: int, ctx: dict, tasks: list[dict]) -> int:
                 await random_delay(st.apply_delay_min, st.apply_delay_max)
             if stop:
                 break
+        if client.token_revoked:
+            ctx["token_revoked"] = True
         log.info("account_task_done", user_id=user_id, ref=ref, task_id=task_id,
                  phrase=phrase, applied=applied, seen=seen)
         # Кэш для карточки задачи: сколько подобрал источник + время прогона.
