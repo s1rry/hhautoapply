@@ -109,7 +109,8 @@ class ClaudeAI:
     async def _call_openai_compatible(self, system: str, user_message: str, max_tokens: int,
                                       model: str | None = None,
                                       base_url: str | None = None,
-                                      api_key: str | None = None) -> tuple[str, int, int]:
+                                      api_key: str | None = None,
+                                      temperature: float | None = None) -> tuple[str, int, int]:
         """Вызов любого OpenAI-совместимого эндпоинта (OpenRouter/Cerebras/Mistral/…)."""
         headers = {
             "Authorization": f"Bearer {api_key or settings.ai_api_key}",
@@ -126,6 +127,8 @@ class ClaudeAI:
                 {"role": "user", "content": user_message},
             ],
         }
+        if temperature is not None:
+            payload["temperature"] = temperature
         # Прокси: явный ai_proxy, иначе tg_proxy (тот же SOCKS, что для Telegram).
         proxy = settings.ai_proxy or (settings.tg_proxy if (settings.tg_proxy or "").startswith("socks5") else "")
         async with httpx.AsyncClient(timeout=60, proxy=proxy or None) as c:
@@ -137,14 +140,16 @@ class ClaudeAI:
         usage = d.get("usage") or {}
         return text, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
 
-    async def _call(self, system: str, user_message: str, max_tokens: int = 1024, model: str | None = None) -> tuple[str, int, int]:
+    async def _call(self, system: str, user_message: str, max_tokens: int = 1024, model: str | None = None,
+                    temperature: float | None = None) -> tuple[str, int, int]:
         # Minimum sane budget — small max_tokens makes models return empty content
         if max_tokens < 800:
             max_tokens = 800
 
         # OpenAI-совместимый провайдер (по умолчанию для облака/self-host).
         if settings.ai_provider != "anthropic":
-            return await self._call_openai_compatible(system, user_message, max_tokens, model)
+            return await self._call_openai_compatible(system, user_message, max_tokens, model,
+                                                      temperature=temperature)
 
         # Permanent fallback: if primary was exhausted before, go straight to fallback.
         if self.use_fallback and self.fallback:
@@ -227,7 +232,10 @@ class ClaudeAI:
 Описание:
 {vacancy_description}"""
 
-        text, inp_tok, out_tok = await self._call(system, user_msg, max_tokens=512, model=model)
+        # Высокая температура — письма к разным вакансиям должны отличаться,
+        # иначе поток одинаковых сопроводительных читается как ботовый.
+        text, inp_tok, out_tok = await self._call(system, user_msg, max_tokens=400,
+                                                  model=model, temperature=0.9)
         log.info("ai_cover_letter_generated", title=vacancy_title[:60], model=model or "default")
         return text.strip(), inp_tok, out_tok
 
