@@ -219,8 +219,20 @@ class ClaudeAI:
                 "_output_tokens": out_tok,
             }
 
+    @staticmethod
+    def _resume_for_letter(resume: str, limit: int = 3500) -> str:
+        """Урезать резюме для письма: резюме уходит в КАЖДОЕ письмо целиком и
+        это основная статья входных токенов. Для сопроводительного важны
+        проекты и стек (в начале), а образование и софт-скилы (в хвосте) модель
+        всё равно не цитирует. Режем по границе строки, чтобы не рвать слова.
+        """
+        if len(resume) <= limit:
+            return resume
+        cut = resume.rfind("\n", 0, limit)
+        return resume[: cut if cut > limit * 0.6 else limit].rstrip()
+
     async def generate_cover_letter(self, vacancy_title: str, vacancy_description: str, company_name: str = "", resume: str | None = None, custom_prompt: str | None = None, model: str | None = None) -> tuple[str, int, int]:
-        resume_text = resume or settings.resume_text
+        resume_text = self._resume_for_letter(resume or settings.resume_text)
         if custom_prompt:
             system = f"{custom_prompt}\n\nПрофиль кандидата:\n{resume_text}"
         else:
