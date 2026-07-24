@@ -39,6 +39,7 @@ async def init_db():
                 "hh_cookies": "TEXT",
                 "connect_reminders": "INTEGER DEFAULT 0",
                 "tier_reminders": "INTEGER DEFAULT 0",
+                "limit_hint_sent": "INTEGER DEFAULT 0",
                 },
                 "vacancies": {"account_ref": "VARCHAR(32)", "skip_reason": "VARCHAR(20)",
                               "search_task_id": "INTEGER"},

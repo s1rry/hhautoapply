@@ -1612,6 +1612,32 @@ async def on_value(message: Message, state: FSMContext, **kw):
     await _render_home(message, state)
 
 
+@router.callback_query(F.data == "limithint:help")
+async def cb_limithint_help(cb: CallbackQuery, **kw):
+    """«Не знаю как увеличить» — короткая инструкция + кнопка суппорта."""
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✍️ Написать в поддержку",
+                              url=f"https://t.me/{settings.support_contact.lstrip('@')}")],
+    ])
+    await cb.message.answer(
+        "🔼 <b>Как поднять лимit до 200</b>\n\n"
+        "1. Внизу нажми <b>📋 Задачи</b> и открой нужную задачу.\n"
+        "2. В настройках задачи выбери <b>Лимит/день</b>.\n"
+        "3. Пришли число <b>200</b>.\n\n"
+        "Готово, бот будет слать до 200 откликов в день по этой задаче.\n"
+        "Не получилось, напиши в поддержку, поможем 👇",
+        reply_markup=kb, parse_mode="HTML")
+    await cb.answer()
+
+
+@router.callback_query(F.data == "limithint:ok")
+async def cb_limithint_ok(cb: CallbackQuery, **kw):
+    """«Мне так и нужно» — извиняемся и больше не пишем."""
+    await cb.message.answer(
+        "👍 Понял, извини что побеспокоил. Работаю дальше.")
+    await cb.answer()
+
+
 @router.callback_query(F.data == "task:tariff")
 async def cb_tariff(cb: CallbackQuery, **kw):
     async with async_session() as session:

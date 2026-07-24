@@ -261,6 +261,57 @@ class WorkerScheduler:
                         u.connect_reminders += 1  # не долбить недоступных
             await session.commit()
 
+    async def _job_limit_hint(self):
+        """Платным/пробным с лимитом ниже максимума тарифа — подсказать, что
+        бот используется не на полную и лимит можно поднять до 200.
+
+        Один раз на пользователя (limit_hint_sent). Берём максимальный лимит
+        среди его настроек и задач: если и он ниже 200 — человек недоиспользует.
+        """
+        from sqlalchemy import select
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        from app.database import async_session
+        from app.models.user import User
+        from app.models.search_task import SearchTask
+        from app.bot.task_menu import PAID_DAILY_LIMIT
+        if not self.bot:
+            return
+        async with async_session() as session:
+            users = (await session.execute(
+                select(User).where(User.tier == "paid", User.hh_connected.is_(True),
+                                   User.limit_hint_sent == 0)
+            )).scalars().all()
+            for u in users:
+                # Максимальный дневной лимит среди общих настроек и всех задач.
+                limits = [u.get_settings().daily_limit]
+                tasks = (await session.execute(
+                    select(SearchTask).where(SearchTask.user_id == u.id))).scalars().all()
+                for t in tasks:
+                    if t.settings_json:
+                        limits.append(t.get_settings().daily_limit)
+                cur = max(limits) if limits else 0
+                if cur >= PAID_DAILY_LIMIT:      # уже на максимуме — не трогаем
+                    u.limit_hint_sent = 1
+                    continue
+                kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🤔 Не знаю как увеличить",
+                                          callback_data="limithint:help")],
+                    [InlineKeyboardButton(text="✅ Мне так и нужно",
+                                          callback_data="limithint:ok")],
+                ])
+                text = (f"📈 <b>Ты используешь бота не на полную</b>\n\n"
+                        f"Сейчас лимит стоит <b>{cur}</b> откликов в день, а на твоём "
+                        f"тарифе доступно до <b>{PAID_DAILY_LIMIT}</b>. Больше откликов, "
+                        f"больше приглашений на собеседования.\n\n"
+                        f"Хочешь поднять лимит?")
+                try:
+                    await self.bot.send_message(u.telegram_id, text, reply_markup=kb,
+                                                parse_mode="HTML")
+                except Exception as e:
+                    log.warning("limit_hint_failed", user_id=u.id, error=str(e))
+                u.limit_hint_sent = 1        # и при ошибке — не долбить недоступных
+            await session.commit()
+
     async def _job_tier_expiry(self):
         """Конец доступа близко — показать результат и предложить продлить.
 
@@ -394,6 +445,18 @@ class WorkerScheduler:
             minute=0,
             id="tier_expiry",
             name="Напоминания об окончании тарифа",
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=3600,
+        )
+        # Подсказка «подними лимит до 200» — раз в день в 13:00 МСК.
+        self.scheduler.add_job(
+            self._job_limit_hint,
+            "cron",
+            hour=13,
+            minute=0,
+            id="limit_hint",
+            name="Подсказка увеличить лимит",
             coalesce=True,
             max_instances=1,
             misfire_grace_time=3600,
