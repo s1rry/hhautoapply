@@ -261,19 +261,22 @@ class WorkerScheduler:
                         u.connect_reminders += 1  # не долбить недоступных
             await session.commit()
 
+    # Уведомляем только тех, у кого лимит ≤ этого: явно недоиспользуют
+    # (обычно остался старый дефолт). Кто выше — не трогаем.
+    LIMIT_HINT_THRESHOLD = 50
+
     async def _job_limit_hint(self):
-        """Платным/пробным с лимитом ниже максимума тарифа — подсказать, что
-        бот используется не на полную и лимит можно поднять до 200.
+        """Платным/пробным с лимитом ≤50 — подсказать, что бот используется
+        не на полную и лимит можно поднять до 200.
 
         Один раз на пользователя (limit_hint_sent). Берём максимальный лимит
-        среди его настроек и задач: если и он ниже 200 — человек недоиспользует.
+        среди его настроек и задач.
         """
         from sqlalchemy import select
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
         from app.database import async_session
         from app.models.user import User
         from app.models.search_task import SearchTask
-        from app.bot.task_menu import PAID_DAILY_LIMIT
         if not self.bot:
             return
         async with async_session() as session:
@@ -290,8 +293,7 @@ class WorkerScheduler:
                     if t.settings_json:
                         limits.append(t.get_settings().daily_limit)
                 cur = max(limits) if limits else 0
-                if cur >= PAID_DAILY_LIMIT:      # уже на максимуме — не трогаем
-                    u.limit_hint_sent = 1
+                if cur > self.LIMIT_HINT_THRESHOLD:   # используют достаточно — не трогаем
                     continue
                 kb = InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="🤔 Не знаю как увеличить",
