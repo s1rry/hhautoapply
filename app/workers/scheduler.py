@@ -285,15 +285,20 @@ class WorkerScheduler:
                                    User.limit_hint_sent == 0)
             )).scalars().all()
             for u in users:
-                # Максимальный дневной лимит среди общих настроек и всех задач.
-                limits = [u.get_settings().daily_limit]
+                # СУММАРНАЯ ёмкость в сутки: лимит стоит НА КАЖДУЮ задачу, поэтому
+                # человек с 3 задачами по 50 делает до 150/день — он НЕ
+                # недоиспользует, хоть максимум по задаче и 50. Складываем лимиты
+                # активных задач; без задач берём общий лимит настроек.
                 tasks = (await session.execute(
-                    select(SearchTask).where(SearchTask.user_id == u.id))).scalars().all()
-                for t in tasks:
-                    if t.settings_json:
-                        limits.append(t.get_settings().daily_limit)
-                cur = max(limits) if limits else 0
-                if cur > self.LIMIT_HINT_THRESHOLD:   # используют достаточно — не трогаем
+                    select(SearchTask).where(SearchTask.user_id == u.id,
+                                             SearchTask.is_active.is_(True)))).scalars().all()
+                if tasks:
+                    default = u.get_settings().daily_limit
+                    cur = sum((t.get_settings().daily_limit if t.settings_json else default)
+                              for t in tasks)
+                else:
+                    cur = u.get_settings().daily_limit
+                if cur > self.LIMIT_HINT_THRESHOLD:   # суммарно используют достаточно — не трогаем
                     continue
                 kb = InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="🤔 Не знаю как увеличить",
