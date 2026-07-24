@@ -53,6 +53,7 @@ class ClaudeAI:
         self.score_pool = self._parse_score_pool(settings.ai_score_pool)
         self._pool_idx = 0
         self._pool_alert_at = 0.0  # когда последний раз предупреждали админа
+        self._primary_alert_at = 0.0  # алерт о падении primary (gpt-4.1-mini)
         self._cooldown: dict[str, float] = {}  # base_url -> до какого времени пропускать
 
     @staticmethod
@@ -244,22 +245,13 @@ class ClaudeAI:
 Описание:
 {vacancy_description}"""
 
-        # Отдельный эндпоинт писем (напр. gpt-4.1-mini) — если задан, пробуем
-        # его первым. При сбое/пустом ответе тихо откатываемся на пул.
-        if (settings.ai_letter_base_url and settings.ai_letter_api_key
-                and settings.ai_letter_model):
-            try:
-                t, i, o = await self._call_openai_compatible(
-                    system, user_msg, max_tokens=700, temperature=0.7,
-                    model=settings.ai_letter_model,
-                    base_url=settings.ai_letter_base_url,
-                    api_key=settings.ai_letter_api_key)
-                if t.strip():
-                    log.info("ai_cover_letter_generated",
-                             title=vacancy_title[:60], via=settings.ai_letter_model)
-                    return self._humanize(t.strip()), i, o
-            except Exception as e:
-                log.warning("letter_dedicated_failed", error=str(e))
+        # Primary (gpt-4.1-mini) — первым. При сбое (лимит/402) _try_primary
+        # сам шлёт алерт, а мы откатываемся на бесплатный пул ниже.
+        primary = await self._try_primary(system, user_msg, max_tokens=700, temperature=0.7)
+        if primary is not None:
+            log.info("ai_cover_letter_generated",
+                     title=vacancy_title[:60], via=settings.ai_letter_model)
+            return self._humanize(primary[0].strip()), primary[1], primary[2]
         # Иначе (или при сбое) — бесплатный пул, что и скоринг; фолбэк на Haiku.
         # Температура 0.7: разнообразие даёт промпт, а 0.9 давал грамм. сбои.
         text, inp_tok, out_tok = await self._pooled_call(
@@ -356,6 +348,57 @@ class ClaudeAI:
         except Exception as e:
             log.warning("pool_alert_failed", error=str(e))
 
+    def _primary(self) -> dict | None:
+        """Основной платный эндпоинт (gpt-4.1-mini), если настроен. Пробуется
+        ПЕРВЫМ и для писем, и для скоринга; при сбое — откат на бесплатный пул."""
+        if (settings.ai_letter_base_url and settings.ai_letter_api_key
+                and settings.ai_letter_model):
+            return {"base_url": settings.ai_letter_base_url,
+                    "api_key": settings.ai_letter_api_key,
+                    "model": settings.ai_letter_model}
+        return None
+
+    async def _try_primary(self, system: str, user_msg: str, max_tokens: int,
+                           temperature: float | None = None) -> tuple[str, int, int] | None:
+        """Один вызов primary. None — не настроен, пустой ответ или ошибка
+        (тогда вызывающий уходит на бесплатный пул). При ошибке шлём алерт."""
+        ep = self._primary()
+        if not ep:
+            return None
+        try:
+            out = await self._call_openai_compatible(
+                system, user_msg, max_tokens=max_tokens, model=ep["model"],
+                base_url=ep["base_url"], api_key=ep["api_key"], temperature=temperature)
+            return out if out[0].strip() else None
+        except Exception as e:
+            await self._alert_primary_down(str(e))
+            return None
+
+    async def _alert_primary_down(self, err: str) -> None:
+        """gpt-4.1-mini недоступен (обычно кончился лимит/баланс) — сказать
+        владельцу. Не чаще раза в час. Бот при этом уходит на бесплатные ключи."""
+        import time as _t
+        if _t.time() - self._primary_alert_at < 3600:
+            return
+        self._primary_alert_at = _t.time()
+        token = settings.tg_bot_token
+        admin = str(settings.tg_admin_chat_id or "")
+        if not token or not admin:
+            return
+        low = err.lower()
+        reason = ("похоже, кончился лимит/баланс" if ("402" in err or "quota" in low
+                  or "insufficient" in low or "credit" in low) else "ошибка провайдера")
+        text = (f"⚠️ <b>gpt-4.1-mini недоступен</b>\n\n{reason}.\n"
+                f"Письма и скоринг перешли на бесплатные ключи, бот работает.\n"
+                f"Чтобы вернуть gpt-4.1-mini — пополни баланс OpenRouter или "
+                f"проверь ключ.\n\n<code>{err[:150]}</code>")
+        try:
+            async with httpx.AsyncClient(timeout=15) as c:
+                await c.post(f"https://api.telegram.org/bot{token}/sendMessage",
+                             json={"chat_id": admin, "text": text, "parse_mode": "HTML"})
+        except Exception as e:
+            log.warning("primary_alert_failed", error=str(e))
+
     async def _score_call(self, system: str, user_msg: str) -> str | None:
         """Скоринг по пулу: каждый вызов начинает со следующего ключа.
 
@@ -363,6 +406,11 @@ class ClaudeAI:
         бы весь минутный лимит, а остальные простаивали. Все бесплатные легли —
         уходим на основного платного, чтобы отклики не встали.
         """
+        # Primary (gpt-4.1-mini) — первым. При сбое (лимит/402) шлём алерт
+        # и уходим на бесплатный пул ниже.
+        primary = await self._try_primary(system, user_msg, max_tokens=800)
+        if primary is not None:
+            return primary[0]
         import time as _t
         now = _t.time()
         errors = []
