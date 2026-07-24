@@ -108,6 +108,57 @@ class TaskInput(StatesGroup):
     value = State()
 
 
+class SurveySG(StatesGroup):
+    text = State()          # ждём свободный текст-пожелание после кнопки опроса
+
+
+# Ярлыки ответов опроса для отчёта админу.
+_SURVEY_LABELS = {
+    "like": "👍 Понравился", "dislike": "👎 Не понравился",
+    "bug": "🐞 Плохо работал", "price": "💰 Дорого",
+}
+
+
+async def _survey_report(cb_or_msg, answer: str):
+    """Переслать ответ опроса владельцу бота."""
+    from aiogram import Bot
+    u = cb_or_msg.from_user
+    who = f"@{u.username}" if u.username else f"id{u.id}"
+    text = f"📋 <b>Опрос</b> · {who}\nОтвет: {answer}"
+    admin = settings.tg_admin_chat_id
+    if not admin:
+        return
+    try:
+        await cb_or_msg.bot.send_message(admin, text, parse_mode="HTML")
+    except Exception as e:
+        log.warning("survey_report_failed", error=str(e))
+
+
+@router.callback_query(F.data.startswith("survey:"))
+async def cb_survey(cb: CallbackQuery, state: FSMContext, **kw):
+    key = cb.data.split(":")[1]
+    if key == "text":
+        await state.set_state(SurveySG.text)
+        await cb.message.answer("✍️ Напиши, что понравилось, что нет и что улучшить. "
+                                "Читаю каждое сообщение лично.")
+        await cb.answer()
+        return
+    label = _SURVEY_LABELS.get(key, key)
+    await _survey_report(cb, label)
+    await cb.message.answer("Спасибо! Твой ответ очень помогает 🙏\n"
+                            "Хочешь вернуться — доступ можно продлить в любой момент.")
+    await cb.answer("Записал, спасибо!")
+
+
+@router.message(SurveySG.text)
+async def survey_text(message: Message, state: FSMContext, **kw):
+    await state.clear()
+    fb = (message.text or "").strip()
+    if fb:
+        await _survey_report(message, f"💬 {fb}")
+    await message.answer("Спасибо за отзыв! Передал разработчику 🙏")
+
+
 async def _load(session, cb_or_msg):
     tg = cb_or_msg.from_user
     return await get_or_create_user(session, tg.id, tg.username)

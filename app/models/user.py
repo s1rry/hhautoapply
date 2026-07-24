@@ -37,6 +37,8 @@ class User(Base, TimestampMixin):
     # Отправлена ли подсказка «подними лимит до 200» (платным с лимитом < 200).
     # Шлём один раз на пользователя, чтобы не спамить.
     limit_hint_sent: Mapped[int] = mapped_column(Integer, default=0)
+    # Отправлен ли опрос после окончания пробного/платного доступа. Один раз.
+    survey_sent: Mapped[int] = mapped_column(Integer, default=0)
     hh_access_token: Mapped[str | None] = mapped_column(EncryptedText)
     hh_refresh_token: Mapped[str | None] = mapped_column(EncryptedText)
     hh_token_expires: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))

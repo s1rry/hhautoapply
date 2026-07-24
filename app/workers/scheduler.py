@@ -319,6 +319,49 @@ class WorkerScheduler:
                 u.limit_hint_sent = 1        # и при ошибке — не долбить недоступных
             await session.commit()
 
+    async def _job_trial_survey(self):
+        """Опрос после окончания доступа: понравился ли сервис, что улучшить.
+        Шлём тем, у кого доступ истёк (tier_until в прошлом) и опрос ещё не
+        отправляли. Ответы уходят владельцу в бота. Один раз на пользователя.
+        """
+        from sqlalchemy import select
+        from datetime import datetime as _dt, timezone as _tz
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        from app.database import async_session
+        from app.models.user import User
+        if not self.bot:
+            return
+        now = _dt.now(_tz.utc)
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="👍 Понравился", callback_data="survey:like"),
+             InlineKeyboardButton(text="👎 Не понравился", callback_data="survey:dislike")],
+            [InlineKeyboardButton(text="🐞 Плохо работал", callback_data="survey:bug"),
+             InlineKeyboardButton(text="💰 Дорого", callback_data="survey:price")],
+            [InlineKeyboardButton(text="✍️ Написать пожелание", callback_data="survey:text")],
+        ])
+        async with async_session() as session:
+            users = (await session.execute(
+                select(User).where(User.tier == "paid", User.tier_until.is_not(None),
+                                   User.survey_sent == 0)
+            )).scalars().all()
+            for u in users:
+                tu = u.tier_until
+                if tu.tzinfo is None:
+                    tu = tu.replace(tzinfo=_tz.utc)
+                if tu > now:                 # доступ ещё активен — рано
+                    continue
+                text = ("🙏 <b>Твой доступ к боту закончился</b>\n\n"
+                        "Помоги сделать сервис лучше, ответь на один вопрос: "
+                        "как тебе бот автооткликов?\n\n"
+                        "Это займёт секунду и очень поможет 👇")
+                try:
+                    await self.bot.send_message(u.telegram_id, text, reply_markup=kb,
+                                                parse_mode="HTML")
+                except Exception as e:
+                    log.warning("survey_send_failed", user_id=u.id, error=str(e))
+                u.survey_sent = 1            # и при ошибке — не долбить недоступных
+            await session.commit()
+
     async def _job_tier_expiry(self):
         """Конец доступа близко — показать результат и предложить продлить.
 
@@ -464,6 +507,18 @@ class WorkerScheduler:
             minute=0,
             id="limit_hint",
             name="Подсказка увеличить лимит",
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=3600,
+        )
+        # Опрос после окончания доступа — раз в день в 14:00 МСК.
+        self.scheduler.add_job(
+            self._job_trial_survey,
+            "cron",
+            hour=14,
+            minute=0,
+            id="trial_survey",
+            name="Опрос после пробного",
             coalesce=True,
             max_instances=1,
             misfire_grace_time=3600,
