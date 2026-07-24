@@ -277,6 +277,7 @@ class WorkerScheduler:
         from app.database import async_session
         from app.models.user import User
         from app.models.search_task import SearchTask
+        from app.bot.task_menu import PAID_DAILY_LIMIT
         if not self.bot:
             return
         async with async_session() as session:
