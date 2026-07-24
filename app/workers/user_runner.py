@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -90,6 +91,11 @@ async def _build_letter(item: dict, title: str, st, resume_text: str,
             low = text.lower()
             if text and len(text) >= 40 and not any(m in low for m in _REFUSAL):
                 if contact:
+                    # Поле контакта задано — оно единственный источник. Убираем
+                    # строку "Контакты:", которую ИИ добавил из резюме, чтобы не
+                    # было дубля, и ставим ровно то, что вписал пользователь.
+                    text = re.sub(r"\n*\s*контакты\s*:.*$", "", text,
+                                  flags=re.IGNORECASE | re.DOTALL).rstrip()
                     text += f"\n\nКонтакты: {contact}"
                 return text, None
         except Exception as e:
