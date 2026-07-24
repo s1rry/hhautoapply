@@ -244,10 +244,24 @@ class ClaudeAI:
 Описание:
 {vacancy_description}"""
 
-        # Письма гоняем через тот же бесплатный пул, что и скоринг (Mistral и
-        # др. пишут по-русски не хуже Haiku — проверено). Пул недоступен —
-        # откат на платную модель писем. Температура 0.7: разнообразие даёт
-        # промпт, а 0.9 давал грамматические сбои.
+        # Отдельный эндпоинт писем (напр. gpt-4.1-mini) — если задан, пробуем
+        # его первым. При сбое/пустом ответе тихо откатываемся на пул.
+        if (settings.ai_letter_base_url and settings.ai_letter_api_key
+                and settings.ai_letter_model):
+            try:
+                t, i, o = await self._call_openai_compatible(
+                    system, user_msg, max_tokens=700, temperature=0.7,
+                    model=settings.ai_letter_model,
+                    base_url=settings.ai_letter_base_url,
+                    api_key=settings.ai_letter_api_key)
+                if t.strip():
+                    log.info("ai_cover_letter_generated",
+                             title=vacancy_title[:60], via=settings.ai_letter_model)
+                    return self._humanize(t.strip()), i, o
+            except Exception as e:
+                log.warning("letter_dedicated_failed", error=str(e))
+        # Иначе (или при сбое) — бесплатный пул, что и скоринг; фолбэк на Haiku.
+        # Температура 0.7: разнообразие даёт промпт, а 0.9 давал грамм. сбои.
         text, inp_tok, out_tok = await self._pooled_call(
             system, user_msg, max_tokens=700, temperature=0.7, fallback_model=model)
         log.info("ai_cover_letter_generated", title=vacancy_title[:60])
