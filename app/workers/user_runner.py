@@ -315,11 +315,16 @@ async def run_user_cycle(user_id: int) -> int:
         # Письма всем на Haiku: качество письма определяет промпт, не модель,
         # а Haiku в разы дешевле. ai_letter_model — общий тумблер модели писем.
         letter_model = settings.ai_letter_model or "claude-haiku-4-5"
+        # Потолок откликов на аккаунт в сутки: лимит задачи можно ставить до 200,
+        # но СУММА по всем задачам не превышает потолок тарифа (hh даёт ~200 на
+        # аккаунт, больше — риск бана). Так же считает _limit_cap в боте.
+        account_cap = _account_daily_cap(user)
 
     total = 0
     for ctx in contexts:
         ctx["user_id"] = user_id
         ctx["letter_model"] = letter_model
+        ctx["account_cap"] = account_cap
         try:
             total += await run_account_cycle(user_id, ctx, tasks)
         except Exception as e:
@@ -417,6 +422,14 @@ async def _notify_ai_down(user_id: int) -> None:
                           f"Проверь баланс провайдера.")
 
 
+def _account_daily_cap(user) -> int:
+    """Потолок откликов на аккаунт в сутки по тарифу (сумма по всем задачам)."""
+    from app.bot.task_menu import FREE_DAILY_LIMIT, PAID_DAILY_LIMIT, ADMIN_DAILY_LIMIT
+    if str(user.telegram_id) == str(settings.tg_admin_chat_id or ""):
+        return ADMIN_DAILY_LIMIT
+    return PAID_DAILY_LIMIT if user.is_paid else FREE_DAILY_LIMIT
+
+
 async def run_account_cycle(user_id: int, ctx: dict, tasks: list[dict]) -> int:
     """Один цикл автоотклика для одного hh-аккаунта.
 
@@ -432,6 +445,7 @@ async def run_account_cycle(user_id: int, ctx: dict, tasks: list[dict]) -> int:
         access_token=ctx["access_token"], refresh_token=ctx["refresh_token"],
         resume_id=ctx["resume_id"], expires_at=ctx["expires_at"],
     )
+    account_cap = ctx.get("account_cap", 200)
     for task in tasks:
         st = task["settings"]
         task_id = task.get("task_id")
@@ -439,7 +453,14 @@ async def run_account_cycle(user_id: int, ctx: dict, tasks: list[dict]) -> int:
         if not _within_window(st.apply_hour_start, st.apply_hour_end):
             continue
         async with async_session() as session:
-            remaining = st.daily_limit - await _sent_today(session, user_id, ref, task_id)
+            # Остаток задачи И остаток аккаунта (сумма по всем задачам ≤ потолка).
+            sent_task = await _sent_today(session, user_id, ref, task_id)
+            sent_acc = await _sent_today(session, user_id, ref, None)
+        acc_left = account_cap - sent_acc
+        if acc_left <= 0:                 # суточный потолок аккаунта выбран — стоп
+            log.info("account_daily_cap_hit", user_id=user_id, ref=ref, cap=account_cap)
+            break
+        remaining = min(st.daily_limit - sent_task, acc_left)
         if remaining <= 0:
             continue
         phrase = task.get("keyword") or ""
