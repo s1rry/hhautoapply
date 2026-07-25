@@ -95,13 +95,15 @@ async def _build_letter(item: dict, title: str, st, resume_text: str,
             # Отказ ищем только в начале ответа, не по всему тексту.
             head = text[:80].lower()
             if text and len(text) >= 40 and not any(m in head for m in _REFUSAL):
-                if contact:
-                    # Поле контакта задано — оно единственный источник. Убираем
-                    # строку "Контакты:", которую ИИ добавил из резюме, чтобы не
-                    # было дубля, и ставим ровно то, что вписал пользователь.
-                    text = re.sub(r"\n*\s*контакты\s*:.*$", "", text,
-                                  flags=re.IGNORECASE | re.DOTALL).rstrip()
-                    text += f"\n\nКонтакты: {contact}"
+                # ВСЕГДА убираем строку контактов от модели: она может выдумать
+                # плейсхолдер (mail@mail.com, @username). Подставляем только
+                # реальный контакт (поле или регексп из резюме); нет реального —
+                # строки контактов в письме нет вовсе.
+                text = re.sub(r"\n*\s*контакты\s*:.*$", "", text,
+                              flags=re.IGNORECASE | re.DOTALL).rstrip()
+                real = _real_contact(contact, resume_text)
+                if real:
+                    text += f"\n\nКонтакты: {real}"
                 return text, None
         except Exception as e:
             log.warning("ai_letter_failed", error=str(e))
@@ -111,6 +113,31 @@ async def _build_letter(item: dict, title: str, st, resume_text: str,
     if custom and contact and contact not in text:
         text += f"\n\nКонтакты: {contact}"
     return text, None
+
+
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+# @ не должен быть частью email/URL (иначе цепляет @mail из ivan@mail.ru).
+_TG_RE = re.compile(r"(?<![\w@.])(?:@[A-Za-z][A-Za-z0-9_]{3,}|t\.me/[A-Za-z][A-Za-z0-9_]{3,})")
+
+
+def _real_contact(contact_field: str, resume: str) -> str:
+    """Реальный контакт для письма: поле пользователя, иначе извлечённый
+    регекспом из резюме (email и/или телеграм). Нет реального — пустая строка,
+    и тогда строки "Контакты:" в письме НЕ будет. Модель контакты выдумывать
+    не должна (плейсхолдеры вроде mail@mail.com), поэтому ей не доверяем —
+    берём только то, что реально есть у пользователя.
+    """
+    if contact_field:
+        return contact_field
+    email = _EMAIL_RE.search(resume or "")
+    tg = _TG_RE.search(resume or "")
+    parts = []
+    if email:
+        parts.append(email.group(0))
+    if tg:
+        t = tg.group(0)
+        parts.append(t if t.startswith("t.me") else f"tg {t}")
+    return ", ".join(parts)
 
 
 def _within_window(start: int, end: int) -> bool:
