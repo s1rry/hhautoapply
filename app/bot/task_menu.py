@@ -333,9 +333,11 @@ def _task_card_kb(t, tasks) -> InlineKeyboardMarkup:
     total = len(tasks)
     prev_id = tasks[idx - 1].id if idx > 0 else None
     next_id = tasks[idx + 1].id if idx < total - 1 else None
-    nav = [b(text="◄", callback_data=(f"task:open:{prev_id}" if prev_id else "task:noop")),
+    nav = [b(text="← Пред." if prev_id else " ",
+             callback_data=(f"task:open:{prev_id}" if prev_id else "task:noop")),
            b(text=f"{idx + 1} из {total}", callback_data="task:noop"),
-           b(text="►", callback_data=(f"task:open:{next_id}" if next_id else "task:noop"))]
+           b(text="След. →" if next_id else " ",
+             callback_data=(f"task:open:{next_id}" if next_id else "task:noop"))]
     return InlineKeyboardMarkup(inline_keyboard=[
         nav,
         [b(text=("⏸ Остановить" if t.is_active else "▶️ Запустить"), callback_data=f"task:atgl:{t.id}"),
