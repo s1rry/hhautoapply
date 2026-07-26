@@ -868,7 +868,48 @@ async def btn_stats(message: Message, **kw):
         "\nℹ️ «Фильтр ИИ» и «уже откликались» — это норма: бот бережёт "
         "отклики и не тратит их на нерелевантные вакансии и дубли."
     )
-    await message.answer("\n".join(lines), parse_mode="HTML")
+    kb = None
+    if needs_test:
+        # Эти вакансии УЖЕ прошли фильтр ИИ (релевантные), но требуют тест —
+        # бот не может пройти его за тебя. Показываем список, чтобы откликнуться
+        # вручную на hh.
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+            text=f"📝 Показать вакансии с тестом ({needs_test})",
+            callback_data="stat:needstest:0")]])
+    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("stat:needstest:"))
+async def cb_needs_test(cb: CallbackQuery, **kw):
+    """Список вакансий, где нужен тест (уже прошли отбор ИИ). По 8 на страницу."""
+    page = int(cb.data.split(":")[2])
+    PER = 8
+    async with async_session() as session:
+        user = await _load(session, cb)
+        rows = (await session.execute(
+            select(Vacancy.title, Vacancy.url)
+            .where(Vacancy.user_id == user.id, Vacancy.skip_reason == "needs_test")
+            .order_by(Vacancy.id.desc()))).all()
+    total = len(rows)
+    if not total:
+        await cb.answer("Вакансий с тестом нет", show_alert=True)
+        return
+    chunk = rows[page * PER:(page + 1) * PER]
+    lines = ["📝 <b>Вакансии, где нужен тест</b>",
+             "Они уже прошли отбор ИИ (подходят тебе), но hh требует тест — "
+             "пройти его за тебя бот не может. Открой и откликнись вручную:\n"]
+    for i, (title, url) in enumerate(chunk, 1 + page * PER):
+        t = (title or "вакансия")[:70]
+        lines.append(f"{i}. <a href=\"{url}\">{t}</a>" if url else f"{i}. {t}")
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀️", callback_data=f"stat:needstest:{page-1}"))
+    if (page + 1) * PER < total:
+        nav.append(InlineKeyboardButton(text="▶️", callback_data=f"stat:needstest:{page+1}"))
+    kb = InlineKeyboardMarkup(inline_keyboard=[nav]) if nav else None
+    await cb.message.answer("\n".join(lines), parse_mode="HTML",
+                            reply_markup=kb, disable_web_page_preview=True)
+    await cb.answer()
 
 
 @router.message(F.text == BTN_SETTINGS)
