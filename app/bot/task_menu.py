@@ -903,9 +903,9 @@ async def cb_needs_test(cb: CallbackQuery, **kw):
         lines.append(f"{i}. <a href=\"{url}\">{t}</a>" if url else f"{i}. {t}")
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton(text="◀️", callback_data=f"stat:needstest:{page-1}"))
+        nav.append(InlineKeyboardButton(text="← Назад", callback_data=f"stat:needstest:{page-1}"))
     if (page + 1) * PER < total:
-        nav.append(InlineKeyboardButton(text="▶️", callback_data=f"stat:needstest:{page+1}"))
+        nav.append(InlineKeyboardButton(text="Ещё →", callback_data=f"stat:needstest:{page+1}"))
     kb = InlineKeyboardMarkup(inline_keyboard=[nav]) if nav else None
     await cb.message.answer("\n".join(lines), parse_mode="HTML",
                             reply_markup=kb, disable_web_page_preview=True)
