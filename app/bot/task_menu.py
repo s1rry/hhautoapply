@@ -903,6 +903,7 @@ async def cb_needs_test(cb: CallbackQuery, **kw):
     for i, (title, url) in enumerate(chunk, 1 + page * PER):
         t = (title or "вакансия")[:70]
         lines.append(f"{i}. <a href=\"{url}\">{t}</a>" if url else f"{i}. {t}")
+    lines.append("\nℹ️ Как откликнешься на hh, вакансия уйдёт из списка сама.")
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton(text="← Назад", callback_data=f"stat:needstest:{page-1}"))

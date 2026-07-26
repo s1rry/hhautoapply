@@ -264,6 +264,16 @@ async def _refresh_negotiations(user_id: int, ctx: dict) -> None:
         vac_task: dict[str, int] = {}
         vac_variant: dict[str, str] = {}
         if by_vac:
+            # Вакансия из списка «нужен тест» попала в отклики = человек прошёл
+            # тест и откликнулся вручную. Убираем её из списка (status=APPLIED,
+            # skip_reason снимаем), чтобы не висела в «нужен тест».
+            from sqlalchemy import update
+            await session.execute(
+                update(Vacancy).where(
+                    Vacancy.user_id == user_id, Vacancy.platform == "hh",
+                    Vacancy.external_id.in_(list(by_vac.keys())),
+                    Vacancy.skip_reason == "needs_test"
+                ).values(status=VacancyStatus.APPLIED, skip_reason=None))
             rows = (await session.execute(
                 select(Vacancy.external_id, Vacancy.search_task_id).where(
                     Vacancy.user_id == user_id, Vacancy.platform == "hh",
