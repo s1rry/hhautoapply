@@ -564,6 +564,15 @@ async def cb_task_active_toggle(cb: CallbackQuery, state: FSMContext, **kw):
             t.is_active = not t.is_active
             if t.is_active and not user.is_active:
                 user.is_active = True  # включили задачу — включаем автоотклик
+            elif not t.is_active:
+                # Выключили задачу: если активных задач не осталось — гасим и
+                # аккаунт-флаг, чтобы интерфейс не показывал «работает» впустую.
+                left = (await session.execute(
+                    select(func.count(SearchTask.id)).where(
+                        SearchTask.user_id == user.id, SearchTask.is_active.is_(True),
+                        SearchTask.id != t.id))).scalar() or 0
+                if left == 0:
+                    user.is_active = False
             await session.commit()
             await _show_task_card(cb, session, t, edit=True)
     await cb.answer()
