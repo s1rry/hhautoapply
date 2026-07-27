@@ -341,6 +341,17 @@ async def run_user_cycle(user_id: int) -> int:
                       "settings": (t.get_settings() if t.settings_json else st_global)}
                      for t in task_objs]
         else:
+            # Активных задач нет. Если задачи ЕСТЬ, но все выключены — человек их
+            # остановил, НЕ откликаемся (иначе бот продолжал бы слать по глобальным
+            # фразам, игнорируя стоп задач). Глобальный fallback — только для тех,
+            # кто вообще не создавал задач (легаси).
+            from app.models.search_task import SearchTask
+            has_any = (await session.execute(
+                select(func.count(SearchTask.id)).where(SearchTask.user_id == user.id)
+            )).scalar() or 0
+            if has_any:
+                log.info("user_all_tasks_stopped", user_id=user.id)
+                return 0
             tasks = [{"keyword": p, "resume_id": None, "resume_text": None,
                       "task_id": None, "settings": st_global}
                      for p in st_global.search_phrases()]
