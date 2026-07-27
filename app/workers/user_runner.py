@@ -531,7 +531,11 @@ async def run_account_cycle(user_id: int, ctx: dict, tasks: list[dict]) -> int:
                 params["text"] = phrase
                 items = await client.search(params, per_page=50, page=page)
             else:
-                items = await client.similar_vacancies(resume_id, per_page=50, page=page)
+                # Рекомендации тоже фильтруем настройками задачи (формат работы,
+                # регион, график и т.д.) — иначе прилетают вакансии мимо фильтров
+                # (напр. «на месте», хотя стоит удалёнка).
+                items = await client.similar_vacancies(resume_id, per_page=50, page=page,
+                                                       params=base_params)
             if client.new_token:
                 await _save_refreshed_token(ctx, client.new_token)
             if not items:
