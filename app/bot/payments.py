@@ -80,21 +80,16 @@ async def cmd_grant(message: Message, **kw):
         await message.answer("Не удалось (пользователь не найден).")
 
 
-@router.message(Command("ai"))
-async def cmd_ai(message: Message, **kw):
-    """Проверить ключи скоринга. Только админ: /ai
+def _is_admin(chat_id) -> bool:
+    return str(chat_id) == str(settings.tg_admin_chat_id or "")
 
-    Дёргает каждый эндпоинт пула настоящим запросом — так видно не только
-    «ключ задан», но и что он реально отвечает и не упёрся в лимит.
-    """
-    if str(message.chat.id) != settings.tg_admin_chat_id:
-        return
+
+async def _ai_report() -> str:
+    """Текст проверки ключей скоринга (дёргает каждый эндпоинт реальным запросом)."""
     from app.ai.claude import claude_ai
     pool = claude_ai.score_pool
     if not pool:
-        await message.answer("AI_SCORE_POOL пуст — скоринг идёт на платном провайдере.")
-        return
-    await message.answer(f"⏳ Проверяю {len(pool)} ключей...")
+        return "AI_SCORE_POOL пуст — скоринг идёт на платном провайдере."
     lines = []
     for ep in pool:
         host = ep["base_url"].split("//")[-1].split("/")[0]
@@ -107,21 +102,129 @@ async def cmd_ai(message: Message, **kw):
             lines.append(f"✅ {host} ({ep['model']}) → {got or 'пустой ответ'}")
         except Exception as e:
             lines.append(f"❌ {host} ({ep['model']}) → {type(e).__name__}: {str(e)[:80]}")
-    await message.answer("🔑 <b>Ключи скоринга</b>\n\n" + "\n".join(lines),
-                         parse_mode="HTML")
+    return "🔑 <b>Ключи скоринга</b>\n\n" + "\n".join(lines)
 
 
-@router.message(Command("clients"))
-async def cmd_clients(message: Message, **kw):
-    """Сводка по клиентам: тариф, срок пробного, активность. Только админ."""
-    if str(message.chat.id) != settings.tg_admin_chat_id:
-        return
+async def _funnel_text() -> str:
+    """Агрегированная воронка (без персональных данных). Основной пульт."""
     import datetime as _dt
     from sqlalchemy import select, func
     from app.models.user import User
     from app.models.application import Application, ApplicationStatus
     from app.models.search_task import SearchTask
+    from app.models.payment import Payment
+    now = _dt.datetime.now(_dt.timezone.utc)
+    async with async_session() as session:
+        async def cnt(q):
+            return (await session.execute(q)).scalar() or 0
+        total = await cnt(select(func.count(User.id)))
+        connected = await cnt(select(func.count(User.id)).where(User.hh_connected.is_(True)))
+        with_task = await cnt(select(func.count(func.distinct(SearchTask.user_id))))
+        with_apply = await cnt(select(func.count(func.distinct(Application.user_id)))
+                               .where(Application.status == ApplicationStatus.SENT))
+        with_invite = await cnt(
+            select(func.count(func.distinct(SearchTask.user_id)))
+            .where(func.coalesce(SearchTask.invites, 0) > 0))
+        free = await cnt(select(func.count(User.id)).where(User.tier == "free"))
+        paid_tier = await cnt(select(func.count(User.id)).where(User.tier == "paid"))
+        # Реально заплатившие — есть успешный платёж.
+        payers = set(r[0] for r in (await session.execute(
+            select(func.distinct(Payment.user_id)).where(Payment.status == "paid"))).all())
+        real_paid = len(payers)
+        # Пробные vs истёкшие среди paid без платежа.
+        prows = (await session.execute(
+            select(User.id, User.tier_until).where(User.tier == "paid"))).all()
+        trial_active = trial_expired = 0
+        for uid, tu in prows:
+            if uid in payers:
+                continue
+            if tu is None:
+                trial_active += 1
+                continue
+            if tu.tzinfo is None:
+                tu = tu.replace(tzinfo=_dt.timezone.utc)
+            if tu > now:
+                trial_active += 1
+            else:
+                trial_expired += 1
+        survey_sent = await cnt(select(func.count(User.id)).where(User.survey_sent == 1))
 
+    def p(n):  # доля от total
+        return f"{round(n / total * 100)}%" if total else "0%"
+    mrr = real_paid * settings.subscription_price
+    return (
+        "📊 <b>Воронка</b>\n\n"
+        f"Зарегистрировано: <b>{total}</b>\n"
+        f"🔗 Подключили hh: <b>{connected}</b> ({p(connected)})\n"
+        f"📋 Создали задачу: <b>{with_task}</b> ({p(with_task)})\n"
+        f"📤 Получили отклики: <b>{with_apply}</b> ({p(with_apply)})\n"
+        f"🎯 Получили приглашения: <b>{with_invite}</b> ({p(with_invite)})\n\n"
+        f"💎 Пробный активен: <b>{trial_active}</b>\n"
+        f"⌛️ Пробный истёк: <b>{trial_expired}</b>\n"
+        f"💰 Оплатили: <b>{real_paid}</b>\n"
+        f"🆓 На бесплатном: <b>{free}</b>\n"
+        f"📝 Опрос отправлен: <b>{survey_sent}</b>\n\n"
+        f"💵 MRR (оценка): <b>{mrr} ₽</b>\n\n"
+        f"⚠️ Главная точка обрыва — подключение hh: "
+        f"из {total} дошли {connected}."
+    )
+
+
+@router.message(Command("admin"))
+async def cmd_admin(message: Message, **kw):
+    """Пульт админа: воронка + кнопки на клиентов и ключи ИИ."""
+    if not _is_admin(message.chat.id):
+        return
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👥 Клиенты", callback_data="admin:clients"),
+         InlineKeyboardButton(text="🔑 Ключи ИИ", callback_data="admin:ai")],
+        [InlineKeyboardButton(text="🔄 Обновить воронку", callback_data="admin:funnel")],
+    ])
+    await message.answer(await _funnel_text(), parse_mode="HTML", reply_markup=kb)
+
+
+@router.callback_query(F.data == "admin:funnel")
+async def cb_admin_funnel(cb: CallbackQuery, **kw):
+    if not _is_admin(cb.message.chat.id):
+        return
+    kb = cb.message.reply_markup
+    await cb.message.edit_text(await _funnel_text(), parse_mode="HTML", reply_markup=kb)
+    await cb.answer("Обновлено")
+
+
+@router.callback_query(F.data == "admin:ai")
+async def cb_admin_ai(cb: CallbackQuery, **kw):
+    if not _is_admin(cb.message.chat.id):
+        return
+    await cb.answer("Проверяю ключи...")
+    await cb.message.answer(await _ai_report(), parse_mode="HTML")
+
+
+@router.callback_query(F.data == "admin:clients")
+async def cb_admin_clients(cb: CallbackQuery, **kw):
+    if not _is_admin(cb.message.chat.id):
+        return
+    for chunk in await _clients_chunks():
+        await cb.message.answer(chunk, parse_mode="HTML")
+    await cb.answer()
+
+
+@router.message(Command("ai"))
+async def cmd_ai(message: Message, **kw):
+    """Проверить ключи скоринга. Только админ: /ai"""
+    if not _is_admin(message.chat.id):
+        return
+    await message.answer("⏳ Проверяю ключи...")
+    await message.answer(await _ai_report(), parse_mode="HTML")
+
+
+async def _clients_chunks() -> list[str]:
+    """Список клиентов кусками ≤3500 символов (для Telegram)."""
+    import datetime as _dt
+    from sqlalchemy import select, func
+    from app.models.user import User
+    from app.models.application import Application, ApplicationStatus
+    from app.models.search_task import SearchTask
     now = _dt.datetime.now(_dt.timezone.utc)
     async with async_session() as session:
         users = (await session.execute(select(User).order_by(User.id))).scalars().all()
@@ -162,6 +265,17 @@ async def cmd_clients(message: Message, **kw):
 
     text = "\n".join(lines)
     # Телеграм режет длинные сообщения — бьём на части по 3500 символов.
+    chunks = []
     while text:
-        await message.answer(text[:3500], parse_mode="HTML")
+        chunks.append(text[:3500])
         text = text[3500:]
+    return chunks
+
+
+@router.message(Command("clients"))
+async def cmd_clients(message: Message, **kw):
+    """Сводка по клиентам: тариф, срок пробного, активность. Только админ."""
+    if not _is_admin(message.chat.id):
+        return
+    for chunk in await _clients_chunks():
+        await message.answer(chunk, parse_mode="HTML")
