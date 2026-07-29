@@ -57,6 +57,39 @@ async def cb_pay_start(cb: CallbackQuery, **kw):
     await cb.answer()
 
 
+@router.message(Command("test"))
+async def cmd_test(message: Message, **kw):
+    """Пометить/снять тестовый аккаунт (свой бот). Исключается из воронки.
+    Только админ: /test <@username или telegram_id>"""
+    if str(message.chat.id) != settings.tg_admin_chat_id:
+        return
+    from sqlalchemy import select as _sel
+    from app.models.user import User
+    parts = (message.text or "").split()
+    if len(parts) < 2:
+        # без аргумента — показать текущие тестовые
+        async with async_session() as session:
+            rows = (await session.execute(
+                _sel(User.username, User.telegram_id).where(User.is_test == 1))).all()
+        lst = "\n".join(f"• @{un}" if un else f"• id{tg}" for un, tg in rows) or "нет"
+        await message.answer("Использование: /test <@username или id>\n\n"
+                             f"Сейчас помечены тестовыми:\n{lst}", parse_mode="HTML")
+        return
+    arg = parts[1].lstrip("@")
+    async with async_session() as session:
+        if arg.isdigit():
+            u = (await session.execute(_sel(User).where(User.telegram_id == int(arg)))).scalar_one_or_none()
+        else:
+            u = (await session.execute(_sel(User).where(User.username == arg))).scalar_one_or_none()
+        if not u:
+            await message.answer("Пользователь не найден.")
+            return
+        u.is_test = 0 if u.is_test else 1
+        await session.commit()
+        state = "помечен ТЕСТОВЫМ (убран из воронки)" if u.is_test else "снят из тестовых"
+    await message.answer(f"✅ @{u.username or u.telegram_id} {state}.")
+
+
 @router.message(Command("grant"))
 async def cmd_grant(message: Message, **kw):
     """Ручное поднятие тарифа (крипта). Только админ: /grant <telegram_id> [дней]."""
@@ -115,25 +148,37 @@ async def _funnel_text() -> str:
     from app.models.payment import Payment
     now = _dt.datetime.now(_dt.timezone.utc)
     async with async_session() as session:
+        # Исключаем из воронки тестовые аккаунты и админа — они не клиенты
+        # и завышают метрики (например, тестовый платёж владельца).
+        excl = set(r[0] for r in (await session.execute(
+            select(User.id).where(User.is_test == 1))).all())
+        arow = (await session.execute(
+            select(User.id).where(User.telegram_id == int(settings.tg_admin_chat_id or 0)))).first()
+        if arow:
+            excl.add(arow[0])
+        NOT = User.id.not_in(excl) if excl else True
+        UNOT = Application.user_id.not_in(excl) if excl else True
+        SNOT = SearchTask.user_id.not_in(excl) if excl else True
+
         async def cnt(q):
             return (await session.execute(q)).scalar() or 0
-        total = await cnt(select(func.count(User.id)))
-        connected = await cnt(select(func.count(User.id)).where(User.hh_connected.is_(True)))
-        with_task = await cnt(select(func.count(func.distinct(SearchTask.user_id))))
+        total = await cnt(select(func.count(User.id)).where(NOT))
+        connected = await cnt(select(func.count(User.id)).where(User.hh_connected.is_(True), NOT))
+        with_task = await cnt(select(func.count(func.distinct(SearchTask.user_id))).where(SNOT))
         with_apply = await cnt(select(func.count(func.distinct(Application.user_id)))
-                               .where(Application.status == ApplicationStatus.SENT))
+                               .where(Application.status == ApplicationStatus.SENT, UNOT))
         with_invite = await cnt(
             select(func.count(func.distinct(SearchTask.user_id)))
-            .where(func.coalesce(SearchTask.invites, 0) > 0))
-        free = await cnt(select(func.count(User.id)).where(User.tier == "free"))
-        paid_tier = await cnt(select(func.count(User.id)).where(User.tier == "paid"))
-        # Реально заплатившие — есть успешный платёж.
+            .where(func.coalesce(SearchTask.invites, 0) > 0, SNOT))
+        free = await cnt(select(func.count(User.id)).where(User.tier == "free", NOT))
+        # Реально заплатившие — есть успешный платёж (кроме тестовых/админа).
         payers = set(r[0] for r in (await session.execute(
-            select(func.distinct(Payment.user_id)).where(Payment.status == "paid"))).all())
+            select(func.distinct(Payment.user_id))
+            .where(Payment.status == "paid", Payment.user_id.not_in(excl) if excl else True))).all())
         real_paid = len(payers)
         # Пробные vs истёкшие среди paid без платежа.
         prows = (await session.execute(
-            select(User.id, User.tier_until).where(User.tier == "paid"))).all()
+            select(User.id, User.tier_until).where(User.tier == "paid", NOT))).all()
         trial_active = trial_expired = 0
         for uid, tu in prows:
             if uid in payers:
@@ -147,7 +192,7 @@ async def _funnel_text() -> str:
                 trial_active += 1
             else:
                 trial_expired += 1
-        survey_sent = await cnt(select(func.count(User.id)).where(User.survey_sent == 1))
+        survey_sent = await cnt(select(func.count(User.id)).where(User.survey_sent == 1, NOT))
 
     def p(n):  # доля от total
         return f"{round(n / total * 100)}%" if total else "0%"

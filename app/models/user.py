@@ -39,6 +39,9 @@ class User(Base, TimestampMixin):
     limit_hint_sent: Mapped[int] = mapped_column(Integer, default=0)
     # Отправлен ли опрос после окончания пробного/платного доступа. Один раз.
     survey_sent: Mapped[int] = mapped_column(Integer, default=0)
+    # Тестовый аккаунт (свои боты владельца). Исключается из воронки /admin,
+    # чтобы не завышать клиентские метрики. Помечается командой /test.
+    is_test: Mapped[int] = mapped_column(Integer, default=0)
     hh_access_token: Mapped[str | None] = mapped_column(EncryptedText)
     hh_refresh_token: Mapped[str | None] = mapped_column(EncryptedText)
     hh_token_expires: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))

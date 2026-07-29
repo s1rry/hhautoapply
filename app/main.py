@@ -41,6 +41,7 @@ async def init_db():
                 "tier_reminders": "INTEGER DEFAULT 0",
                 "limit_hint_sent": "INTEGER DEFAULT 0",
                 "survey_sent": "INTEGER DEFAULT 0",
+                "is_test": "INTEGER DEFAULT 0",
                 },
                 "vacancies": {"account_ref": "VARCHAR(32)", "skip_reason": "VARCHAR(20)",
                               "search_task_id": "INTEGER"},
