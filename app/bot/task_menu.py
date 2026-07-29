@@ -63,7 +63,7 @@ def _limit_cap(user) -> int:
 LETTER_MODES = {"always": "всегда", "required": "только где требуется", "off": "без писем"}
 
 # Источник вакансий для задачи.
-SOURCE_LABELS = {"keyword": "по ключу", "recommended": "рекомендации", "both": "ключ + рекомендации"}
+SOURCE_LABELS = {"keyword": "по названию", "recommended": "рекомендации", "both": "название + рекомендации"}
 SOURCE_CYCLE = {"keyword": "recommended", "recommended": "both", "both": "keyword"}
 
 BTN_TASK = "📋 Задачи"
@@ -170,7 +170,7 @@ def _summary(s: UserSettings, tasks_line: str = "") -> str:
     exp = ", ".join(EXPERIENCE[c] for c in s.experience) or "любой"
     emp = ", ".join(EMPLOYMENT[c] for c in s.employment) or "любая"
     return (
-        f"🎯 Задачи (ключевые слова): <b>{tasks_line or '⚠️ не задано (укажи!)'}</b>\n"
+        f"🎯 Кого ищем: <b>{tasks_line or '⚠️ не задано (укажи!)'}</b>\n"
         f"📍 Регион: <b>{areas}</b>\n"
         f"💻 Формат: <b>{fmt}</b>\n"
         f"📈 Опыт: <b>{exp}</b>\n"
@@ -355,7 +355,7 @@ async def _show_task_card(target, session, t, edit=False):
     tasks = await list_tasks(session, t.user_id)
     today, total = await _task_sent_counts(session, t.id)
     idx = next((i for i, x in enumerate(tasks) if x.id == t.id), 0)
-    src = SOURCE_LABELS.get(getattr(s, "vacancy_source", "keyword"), "по ключу")
+    src = SOURCE_LABELS.get(getattr(s, "vacancy_source", "keyword"), "по названию")
     inv, inv_t = getattr(t, "invites", 0) or 0, getattr(t, "invites_today", 0) or 0
     views, views_t = getattr(t, "views", 0) or 0, getattr(t, "views_today", 0) or 0
     lines = [
@@ -729,7 +729,7 @@ WHATS_NEW = (
     "🆕 <b>Возможности бота</b>\n\n"
     "📋 <b>Задачи</b> — у каждой свой ключ, своё резюме и свои настройки поиска "
     "(📋 Задачи → ➕ Новая задача).\n"
-    "🧭 <b>Источник вакансий</b> — по ключу или по ленте рекомендаций hh под резюме "
+    "🧭 <b>Источник вакансий</b> — по названию профессии или по ленте рекомендаций hh под резюме "
     "(в карточке задачи). Рекомендаций в разы больше и они сами обновляются.\n"
     "🎯 <b>Умный отбор (ИИ)</b> — оценивает вакансию по резюме и отсекает нерелевантные.\n"
     "🔎 <b>Поиск по описанию</b> — вакансий ещё больше (в подменю отбора).\n"
@@ -810,7 +810,7 @@ async def cmd_start(message: Message, state: FSMContext, **kw):
             f"💎 Тариф: <b>{tariff}</b>\n"
             f"{access_line}\n"
             f"🤖 Автоотклик: <b>{status}</b>\n"
-            f"🔑 Ключевые слова: <b>{kw}</b>\n"
+            f"🔍 Кого ищем: <b>{kw}</b>\n"
             f"📊 Откликов сегодня: <b>{today}</b>\n\n"
             "Управление — кнопками внизу 👇\n"
             "📋 <b>Задача</b> — фильтры и запуск · 📊 <b>Статистика</b> · ⚙️ <b>Настройки</b>\n"
@@ -1580,7 +1580,7 @@ async def cb_tog(cb: CallbackQuery, state: FSMContext, **kw):
 
 # ── Ввод значений (FSM) ──
 _PROMPTS = {
-    "search_text": "Пришли ключевые слова для поиска (например: <code>системный аналитик</code>). Пусто = по умолчанию.",
+    "search_text": "Кого ищем? Пришли название профессии (например: <code>системный аналитик</code>). Пусто = по умолчанию.",
     "areas": "Пришли город или несколько через запятую (например: <code>Москва, СПб, Казань</code>). "
              "Для всей страны — <code>вся Россия</code>.",
     "salary_min": "Пришли минимальную зарплату числом (например: <code>200000</code>). 0 = без ограничения.",
@@ -1761,7 +1761,7 @@ async def cb_tariff(cb: CallbackQuery, **kw):
         f"• до {PAID_DAILY_LIMIT} откликов/день — это в "
         f"{PAID_DAILY_LIMIT // FREE_DAILY_LIMIT} раз больше\n"
         f"• до {settings.max_hh_accounts} hh-аккаунтов сразу\n"
-        "• вакансии из рекомендаций hh, а не только по ключевым словам\n"
+        "• вакансии из рекомендаций hh, а не только по названию\n"
         "• A/B-тест писем, воронка приглашений и просмотров\n"
         "• автоподнятие резюме и напоминания\n\n"
         "<i>Один отклик по подписке стоит дешевле рубля.</i>\n"
