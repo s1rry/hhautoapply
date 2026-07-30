@@ -163,6 +163,9 @@ async def _funnel_text() -> str:
         async def cnt(q):
             return (await session.execute(q)).scalar() or 0
         total = await cnt(select(func.count(User.id)).where(NOT))
+        # Под-воронка подключения hh (главная точка обрыва).
+        started_conn = await cnt(select(func.count(User.id)).where(User.connect_stage >= 1, NOT))
+        login_sent = await cnt(select(func.count(User.id)).where(User.connect_stage >= 2, NOT))
         connected = await cnt(select(func.count(User.id)).where(User.hh_connected.is_(True), NOT))
         with_task = await cnt(select(func.count(func.distinct(SearchTask.user_id))).where(SNOT))
         with_apply = await cnt(select(func.count(func.distinct(Application.user_id)))
@@ -200,6 +203,8 @@ async def _funnel_text() -> str:
     return (
         "📊 <b>Воронка</b>\n\n"
         f"Зарегистрировано: <b>{total}</b>\n"
+        f"🔌 Начали подключение: <b>{started_conn}</b> ({p(started_conn)})\n"
+        f"🔑 Ввели логин (код отправлен): <b>{login_sent}</b> ({p(login_sent)})\n"
         f"🔗 Подключили hh: <b>{connected}</b> ({p(connected)})\n"
         f"📋 Создали задачу: <b>{with_task}</b> ({p(with_task)})\n"
         f"📤 Получили отклики: <b>{with_apply}</b> ({p(with_apply)})\n"

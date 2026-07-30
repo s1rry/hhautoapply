@@ -45,6 +45,10 @@ class User(Base, TimestampMixin):
     # Дата последнего уведомления «упёрся в дневной лимит» (YYYY-MM-DD) —
     # чтобы слать не чаще раза в сутки.
     cap_notify_date: Mapped[str | None] = mapped_column(String(10))
+    # Максимальная достигнутая стадия подключения hh (для воронки активации):
+    # 0 — не начинал, 1 — открыл подключение, 2 — ввёл логин (код отправлен),
+    # 3 — подключил (=hh_connected). Только растёт.
+    connect_stage: Mapped[int] = mapped_column(Integer, default=0)
     hh_access_token: Mapped[str | None] = mapped_column(EncryptedText)
     hh_refresh_token: Mapped[str | None] = mapped_column(EncryptedText)
     hh_token_expires: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))

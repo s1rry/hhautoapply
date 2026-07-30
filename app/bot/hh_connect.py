@@ -69,8 +69,22 @@ CONNECT_PROMPT = (
 )
 
 
+async def _bump_stage(chat_id: int, username, stage: int) -> None:
+    """Отметить достигнутую стадию подключения hh (только растёт) — для воронки."""
+    try:
+        async with async_session() as session:
+            user = await get_or_create_user(session, chat_id, username)
+            if (user.connect_stage or 0) < stage:
+                user.connect_stage = stage
+                await session.commit()
+    except Exception as e:
+        log.warning("bump_stage_failed", error=str(e))
+
+
 async def _start_connect(message: Message, state: FSMContext):
     await state.clear()
+    await _bump_stage(message.chat.id,
+                      message.from_user.username if message.from_user else None, 1)
     await message.answer(CONNECT_PROMPT, parse_mode="HTML")
     await state.set_state(ConnectSG.phone)
 
@@ -151,6 +165,8 @@ async def connect_phone(message: Message, state: FSMContext, **kw):
     if res.get("status") == "code_sent":
         set_session(message.chat.id, sess)
         await state.set_state(ConnectSG.code)
+        await _bump_stage(message.chat.id,
+                          message.from_user.username if message.from_user else None, 2)
         await message.answer("📩 hh отправил код. Пришли его сюда одним сообщением.")
     elif res.get("status") == "captcha":
         set_session(message.chat.id, sess)
