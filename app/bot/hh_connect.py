@@ -59,11 +59,12 @@ async def _is_cancel(message: Message, state: FSMContext) -> bool:
 
 CONNECT_PROMPT = (
     "🔐 <b>Подключение hh.ru — 2 шага, ~1 минута</b>\n\n"
-    "1️⃣ Пришли номер телефона от аккаунта hh "
-    "(например <code>+79991234567</code>).\n"
-    "2️⃣ hh отправит тебе код (в приложение / СМС / почту) — введёшь его здесь.\n\n"
-    "🔒 Пароль <b>не нужен</b> — мы его не спрашиваем. Код приходит <b>тебе</b> от hh, "
-    "бот его не знает. Это безопасно.\n\n"
+    "1️⃣ Пришли <b>телефон или почту</b> от аккаунта hh.\n"
+    "   • почта: <code>ivan@mail.ru</code>\n"
+    "   • телефон: <code>+79991234567</code>\n"
+    "2️⃣ hh отправит тебе код (на почту / в приложение / СМС) — введёшь его здесь.\n\n"
+    "🔒 Пароль <b>не нужен</b>. Код приходит <b>тебе</b> от hh, бот его не знает.\n"
+    "Не хочешь давать номер телефона? <b>Используй почту</b> — это работает так же.\n\n"
     "Отмена: /cancel"
 )
 
@@ -106,8 +107,10 @@ async def _send_why(message: Message) -> None:
         "🛡 <b>Коротко о безопасности</b>\n\n"
         "<b>Пароль не спрашиваем.</b> Вход на hh идёт по коду, который hh "
         "присылает лично тебе. Мы его не знаем и знать не можем.\n\n"
-        "<b>Телефон нужен только hh</b>, чтобы отправить тебе этот код. "
-        "Бот передаёт номер на hh.ru и нигде не публикует.\n\n"
+        "<b>Боишься за номер телефона? Введи почту.</b> hh примет и email, "
+        "и пришлёт код на неё. Номер давать не обязательно.\n\n"
+        "<b>Телефон/почта нужны только hh</b>, чтобы отправить тебе код. "
+        "Бот передаёт их на hh.ru и нигде не публикует.\n\n"
         "<b>Что бот делает:</b> ищет вакансии, пишет сопроводительные и "
         "отправляет отклики от твоего имени — то же, что ты делал бы руками.\n\n"
         "<b>Чего не делает:</b> не меняет резюме, не удаляет отклики, "
@@ -132,13 +135,19 @@ async def cb_connect_why(cb: CallbackQuery, state: FSMContext, **kw):
 async def connect_phone(message: Message, state: FSMContext, **kw):
     if await _is_cancel(message, state):
         return
-    phone = (message.text or "").strip()
-    if not phone or len(phone) < 5:
-        await message.answer("Не похоже на номер. Пришли телефон ещё раз или /cancel.")
+    login = (message.text or "").strip()
+    # Принимаем телефон ИЛИ email — hh на форме входа берёт и то, и другое.
+    is_email = "@" in login and "." in login.split("@")[-1]
+    is_phone = sum(c.isdigit() for c in login) >= 10
+    if not (is_email or is_phone):
+        await message.answer("Не похоже на телефон или почту. Пришли ещё раз "
+                             "(например <code>ivan@mail.ru</code> или "
+                             "<code>+79991234567</code>) или /cancel.", parse_mode="HTML")
         return
-    await message.answer("⏳ Открываю вход на hh и запрашиваю код...")
+    where = "на почту" if is_email else "по СМС / в приложение hh"
+    await message.answer(f"⏳ Открываю вход на hh и запрашиваю код ({where})...")
     sess = OTPLoginSession()
-    res = await sess.start(phone)
+    res = await sess.start(login)
     if res.get("status") == "code_sent":
         set_session(message.chat.id, sess)
         await state.set_state(ConnectSG.code)
