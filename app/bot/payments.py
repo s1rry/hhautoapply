@@ -196,6 +196,13 @@ async def _funnel_text() -> str:
             else:
                 trial_expired += 1
         survey_sent = await cnt(select(func.count(User.id)).where(User.survey_sent == 1, NOT))
+        # Ответы опроса по категориям.
+        srows = (await session.execute(
+            select(User.survey_answer, func.count(User.id))
+            .where(User.survey_answer.is_not(None), NOT)
+            .group_by(User.survey_answer))).all()
+        sd = {k: v for k, v in srows}
+        survey_answered = sum(sd.values())
 
     def p(n):  # доля от total
         return f"{round(n / total * 100)}%" if total else "0%"
@@ -213,7 +220,9 @@ async def _funnel_text() -> str:
         f"⌛️ Пробный истёк: <b>{trial_expired}</b>\n"
         f"💰 Оплатили: <b>{real_paid}</b>\n"
         f"🆓 На бесплатном: <b>{free}</b>\n"
-        f"📝 Опрос отправлен: <b>{survey_sent}</b>\n\n"
+        f"📝 Опрос отправлен: <b>{survey_sent}</b>, ответили: <b>{survey_answered}</b>\n"
+        f"   👍 {sd.get('like', 0)} · 👎 {sd.get('dislike', 0)} · "
+        f"🐞 {sd.get('bug', 0)} · 💰 {sd.get('price', 0)}\n\n"
         f"💵 MRR (оценка): <b>{mrr} ₽</b>\n\n"
         f"⚠️ Главная точка обрыва — подключение hh: "
         f"из {total} дошли {connected}."

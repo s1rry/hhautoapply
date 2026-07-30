@@ -41,6 +41,7 @@ async def init_db():
                 "tier_reminders": "INTEGER DEFAULT 0",
                 "limit_hint_sent": "INTEGER DEFAULT 0",
                 "survey_sent": "INTEGER DEFAULT 0",
+                "survey_answer": "VARCHAR(16)",
                 "is_test": "INTEGER DEFAULT 0",
                 "cap_notify_date": "VARCHAR(10)",
                 "connect_stage": "INTEGER DEFAULT 0",

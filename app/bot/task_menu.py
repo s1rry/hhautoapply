@@ -145,6 +145,11 @@ async def cb_survey(cb: CallbackQuery, state: FSMContext, **kw):
         await cb.answer()
         return
     label = _SURVEY_LABELS.get(key, key)
+    # Сохраняем ответ для агрегата в /admin.
+    async with async_session() as session:
+        user = await _load(session, cb)
+        user.survey_answer = key
+        await session.commit()
     await _survey_report(cb, label)
     await cb.message.answer("Спасибо! Твой ответ очень помогает 🙏\n"
                             "Хочешь вернуться — доступ можно продлить в любой момент.")

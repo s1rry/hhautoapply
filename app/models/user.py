@@ -39,6 +39,8 @@ class User(Base, TimestampMixin):
     limit_hint_sent: Mapped[int] = mapped_column(Integer, default=0)
     # Отправлен ли опрос после окончания пробного/платного доступа. Один раз.
     survey_sent: Mapped[int] = mapped_column(Integer, default=0)
+    # Ответ на опрос: like | dislike | bug | price (для агрегата в /admin).
+    survey_answer: Mapped[str | None] = mapped_column(String(16))
     # Тестовый аккаунт (свои боты владельца). Исключается из воронки /admin,
     # чтобы не завышать клиентские метрики. Помечается командой /test.
     is_test: Mapped[int] = mapped_column(Integer, default=0)
