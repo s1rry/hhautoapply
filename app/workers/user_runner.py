@@ -363,10 +363,15 @@ async def run_user_cycle(user_id: int) -> int:
         # Письма всем на Haiku: качество письма определяет промпт, не модель,
         # а Haiku в разы дешевле. ai_letter_model — общий тумблер модели писем.
         letter_model = settings.ai_letter_model or "claude-haiku-4-5"
-        # Потолок откликов на аккаунт в сутки: лимит задачи можно ставить до 200,
-        # но СУММА по всем задачам не превышает потолок тарифа (hh даёт ~200 на
-        # аккаунт, больше — риск бана). Так же считает _limit_cap в боте.
-        account_cap = _account_daily_cap(user)
+        # Потолок откликов на аккаунт в сутки: платному 200, пробному (paid-тариф
+        # без реального платежа) — 50, free — 15. Реальный платёж = строка в
+        # payments со статусом paid.
+        from app.models.payment import Payment
+        is_real_paid = ((await session.execute(
+            select(func.count(Payment.id)).where(
+                Payment.user_id == user.id, Payment.status == "paid"))
+        )).scalar() > 0
+        account_cap = _account_daily_cap(user, is_real_paid)
 
     total = 0
     for ctx in contexts:
@@ -392,7 +397,34 @@ async def run_user_cycle(user_id: int) -> int:
             break
     if any(c.get("token_revoked") for c in contexts):
         await _notify_token_revoked(user_id)
+    if any(c.get("cap_hit") for c in contexts) and not is_real_paid:
+        await _notify_cap_reached(user_id, account_cap)
     return total
+
+
+async def _notify_cap_reached(user_id: int, cap: int) -> None:
+    """Пробный/free упёрся в дневной лимит — предложить полный тариф (до 200).
+    Раз в сутки на пользователя (cap_notify_date), чтобы не спамить каждый цикл.
+    Это самый конверсионный момент: человек хочет ещё, но упёрся в лимит.
+    """
+    from datetime import date
+    from app.bot.task_menu import PAID_DAILY_LIMIT
+    today = date.today().isoformat()
+    async with async_session() as session:
+        user = await session.get(User, user_id)
+        if not user or not user.telegram_id:
+            return
+        if (user.cap_notify_date or "") == today:   # уже уведомили сегодня
+            return
+        user.cap_notify_date = today
+        await session.commit()
+        price = settings.subscription_price
+    text = (f"⚡️ <b>Дневной лимит исчерпан ({cap} откликов)</b>\n\n"
+            f"На полном тарифе бот шлёт до <b>{PAID_DAILY_LIMIT} откликов в день</b> — "
+            f"это в {max(1, PAID_DAILY_LIMIT // cap)} раза больше шансов на приглашения.\n\n"
+            f"Оформить за {price}₽/мес 👇")
+    kb = {"inline_keyboard": [[{"text": f"💎 Оформить за {price}₽", "callback_data": "pay:start"}]]}
+    await _send_tg(user.telegram_id, text, buttons=kb["inline_keyboard"])
 
 
 async def _notify_token_revoked(user_id: int) -> None:
@@ -470,12 +502,18 @@ async def _notify_ai_down(user_id: int) -> None:
                           f"Проверь баланс провайдера.")
 
 
-def _account_daily_cap(user) -> int:
-    """Потолок откликов на аккаунт в сутки по тарифу (сумма по всем задачам)."""
-    from app.bot.task_menu import FREE_DAILY_LIMIT, PAID_DAILY_LIMIT, ADMIN_DAILY_LIMIT
+def _account_daily_cap(user, is_real_paid: bool = True) -> int:
+    """Потолок откликов на аккаунт в сутки (сумма по всем задачам):
+    админ — без границ, реально оплативший — 200, пробный — 50, free — 15.
+    Пробному даём меньше платного: увидеть, что работает, но не выгрести рынок
+    бесплатно за неделю (тогда незачем платить)."""
+    from app.bot.task_menu import (FREE_DAILY_LIMIT, PAID_DAILY_LIMIT,
+                                   ADMIN_DAILY_LIMIT, TRIAL_DAILY_LIMIT)
     if str(user.telegram_id) == str(settings.tg_admin_chat_id or ""):
         return ADMIN_DAILY_LIMIT
-    return PAID_DAILY_LIMIT if user.is_paid else FREE_DAILY_LIMIT
+    if not user.is_paid:
+        return FREE_DAILY_LIMIT
+    return PAID_DAILY_LIMIT if is_real_paid else TRIAL_DAILY_LIMIT
 
 
 async def run_account_cycle(user_id: int, ctx: dict, tasks: list[dict]) -> int:
@@ -507,6 +545,7 @@ async def run_account_cycle(user_id: int, ctx: dict, tasks: list[dict]) -> int:
         acc_left = account_cap - sent_acc
         if acc_left <= 0:                 # суточный потолок аккаунта выбран — стоп
             log.info("account_daily_cap_hit", user_id=user_id, ref=ref, cap=account_cap)
+            ctx["cap_hit"] = account_cap  # для уведомления «подними лимит тарифом»
             break
         remaining = min(st.daily_limit - sent_task, acc_left)
         if remaining <= 0:

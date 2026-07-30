@@ -48,6 +48,7 @@ AREA_NAMES = {1: "Москва", 2: "Санкт-Петербург", 113: "Вс�
 
 FREE_DAILY_LIMIT = 15
 PAID_DAILY_LIMIT = 200
+TRIAL_DAILY_LIMIT = 50    # пробный: меньше платного, чтобы не выгрести рынок бесплатно
 ADMIN_DAILY_LIMIT = 1000  # админ не ограничен тарифом
 
 
@@ -284,7 +285,7 @@ def _task_kb(t, s: UserSettings) -> InlineKeyboardMarkup:
            callback_data=f"task:atgl:{t.id}")],
         [b(text=f"📄 Резюме: {(t.resume_title or 'аккаунта')[:26]}",
            callback_data=f"task:res:{t.id}")],
-        [b(text=f"🧭 Источник: {SOURCE_LABELS.get(getattr(s, 'vacancy_source', 'keyword'), 'по ключу')}",
+        [b(text=f"🧭 Источник: {SOURCE_LABELS.get(getattr(s, 'vacancy_source', 'keyword'), 'по названию')}",
            callback_data="task:source")],
         [b(text=f"🎯 Умный отбор (ИИ): {('от ' + str(s.ai_score_min) + '%') if s.ai_score_enabled else 'выкл'}",
            callback_data="task:score")],
@@ -727,7 +728,7 @@ async def on_newtask(message: Message, state: FSMContext, **kw):
 
 WHATS_NEW = (
     "🆕 <b>Возможности бота</b>\n\n"
-    "📋 <b>Задачи</b> — у каждой свой ключ, своё резюме и свои настройки поиска "
+    "📋 <b>Задачи</b> — у каждой своё название поиска, своё резюме и свои настройки "
     "(📋 Задачи → ➕ Новая задача).\n"
     "🧭 <b>Источник вакансий</b> — по названию профессии или по ленте рекомендаций hh под резюме "
     "(в карточке задачи). Рекомендаций в разы больше и они сами обновляются.\n"

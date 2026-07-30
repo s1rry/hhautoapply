@@ -42,6 +42,9 @@ class User(Base, TimestampMixin):
     # Тестовый аккаунт (свои боты владельца). Исключается из воронки /admin,
     # чтобы не завышать клиентские метрики. Помечается командой /test.
     is_test: Mapped[int] = mapped_column(Integer, default=0)
+    # Дата последнего уведомления «упёрся в дневной лимит» (YYYY-MM-DD) —
+    # чтобы слать не чаще раза в сутки.
+    cap_notify_date: Mapped[str | None] = mapped_column(String(10))
     hh_access_token: Mapped[str | None] = mapped_column(EncryptedText)
     hh_refresh_token: Mapped[str | None] = mapped_column(EncryptedText)
     hh_token_expires: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
