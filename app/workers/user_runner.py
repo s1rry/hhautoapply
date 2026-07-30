@@ -55,7 +55,8 @@ MAX_SCORE_FAILS = 5
 async def _build_letter(item: dict, title: str, st, resume_text: str,
                         ab_index: int = 0,
                         model: str | None = None,
-                        full_desc: str = "") -> tuple[str, str | None]:
+                        full_desc: str = "",
+                        global_contact: str = "") -> tuple[str, str | None]:
     """Собрать письмо. Возвращает (текст, вариант A/B|None).
       off      — без письма ("")
       required — письмо только если вакансия его требует
@@ -66,7 +67,9 @@ async def _build_letter(item: dict, title: str, st, resume_text: str,
         return "", None
     if mode == "required" and not item.get("response_letter_required"):
         return "", None
-    contact = (getattr(st, "contact", "") or "").strip()
+    # Контакт: у задачи свой, иначе общий на аккаунт (его могли задать ПОСЛЕ
+    # создания задачи — тогда в снимок задачи он не попал). Общий как запасной.
+    contact = (getattr(st, "contact", "") or "").strip() or (global_contact or "").strip()
     # A/B тест: чередуем письмо A и B (по чётности отправленных).
     la = (getattr(st, "letter_a", "") or "").strip()
     lb = (getattr(st, "letter_b", "") or "").strip()
@@ -378,6 +381,7 @@ async def run_user_cycle(user_id: int) -> int:
         ctx["user_id"] = user_id
         ctx["letter_model"] = letter_model
         ctx["account_cap"] = account_cap
+        ctx["global_contact"] = (getattr(st_global, "contact", "") or "").strip()
         try:
             total += await run_account_cycle(user_id, ctx, tasks)
         except Exception as e:
@@ -680,7 +684,8 @@ async def run_account_cycle(user_id: int, ctx: dict, tasks: list[dict]) -> int:
                     full_desc = await client.get_description(vid)
                 letter, letter_variant = await _build_letter(
                     item, title, st, resume_text, ab_index=applied,
-                    model=ctx.get("letter_model"), full_desc=full_desc)
+                    model=ctx.get("letter_model"), full_desc=full_desc,
+                    global_contact=ctx.get("global_contact", ""))
                 try:
                     if item.get("has_test"):
                         # Вакансия с тестом: обычный API-отклик не пройдёт.
