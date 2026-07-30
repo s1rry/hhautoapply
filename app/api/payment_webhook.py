@@ -80,11 +80,16 @@ async def _yookassa_handler(request: web.Request) -> web.Response:
         amount = int(float((verified.get("amount") or {}).get("value", "0")))
     except ValueError:
         amount = 0
+    # Дни из метаданных платежа (неделя/месяц); нет — месяц по умолчанию.
+    try:
+        days = int(meta.get("days") or settings.subscription_days)
+    except ValueError:
+        days = settings.subscription_days
 
     async with async_session() as session:
         applied = await apply_payment(
             session, telegram_id, provider="yookassa", amount=amount,
-            days=settings.subscription_days, operation_id=payment_id,
+            days=days, operation_id=payment_id,
         )
     if applied:
         bot = request.app.get("bot")

@@ -30,16 +30,21 @@ def is_configured() -> bool:
     return bool(settings.yookassa_shop_id and settings.yookassa_secret_key)
 
 
-async def create_payment(telegram_id: int, amount: int, description: str) -> str | None:
-    """Создать платёж, вернуть ссылку на оплату (confirmation_url) или None."""
+async def create_payment(telegram_id: int, amount: int, description: str,
+                         days: int | None = None) -> str | None:
+    """Создать платёж, вернуть ссылку на оплату (confirmation_url) или None.
+    days — на сколько дней тариф (неделя/месяц); вебхук начислит именно их."""
     if not is_configured():
         return None
+    meta = {"telegram_id": str(telegram_id)}
+    if days:
+        meta["days"] = str(days)
     body = {
         "amount": {"value": f"{amount:.2f}", "currency": "RUB"},
         "capture": True,
         "confirmation": {"type": "redirect", "return_url": settings.yookassa_return_url},
         "description": description[:128],
-        "metadata": {"telegram_id": str(telegram_id)},
+        "metadata": meta,
     }
     headers = {"Idempotence-Key": str(uuid.uuid4()), "Content-Type": "application/json"}
     try:

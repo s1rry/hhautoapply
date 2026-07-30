@@ -23,21 +23,31 @@ router = Router()
 
 @router.callback_query(F.data == "pay:start")
 async def cb_pay_start(cb: CallbackQuery, **kw):
-    price = settings.subscription_price
-    days = settings.subscription_days
-    lines = [f"💳 <b>Оплата расширенного тарифа</b>\n\n{price}₽ — {days} дней.\n"]
+    m_price, m_days = settings.subscription_price, settings.subscription_days
+    w_price, w_days = settings.weekly_price, settings.weekly_days
+    lines = [
+        "💳 <b>Оплата расширенного тарифа</b>\n",
+        f"📅 <b>Месяц</b> — {m_price}₽ / {m_days} дней",
+        f"⚡️ <b>Неделя</b> — {w_price}₽ / {w_days} дней (если уверен, что найдёшь быстро)",
+        f"\n<i>Месяц выгоднее уже со 2-й недели.</i>\n",
+    ]
     buttons: list[list[InlineKeyboardButton]] = []
 
     paid_online = False
     if yookassa.is_configured():
-        url = await yookassa.create_payment(
-            cb.from_user.id, price, "Расширенный тариф авто-откликов")
-        if url:
-            buttons.append([InlineKeyboardButton(text=f"Оплатить {price}₽ картой", url=url)])
+        m_url = await yookassa.create_payment(
+            cb.from_user.id, m_price, "Расширенный тариф — месяц", days=m_days)
+        w_url = await yookassa.create_payment(
+            cb.from_user.id, w_price, "Расширенный тариф — неделя", days=w_days)
+        if m_url:
+            buttons.append([InlineKeyboardButton(text=f"📅 Месяц — {m_price}₽", url=m_url)])
+            paid_online = True
+        if w_url:
+            buttons.append([InlineKeyboardButton(text=f"⚡️ Неделя — {w_price}₽", url=w_url)])
             paid_online = True
     if not paid_online and settings.yoomoney_wallet:
         url = build_yoomoney_url(cb.from_user.id)
-        buttons.append([InlineKeyboardButton(text=f"Оплатить {price}₽ картой (ЮMoney)", url=url)])
+        buttons.append([InlineKeyboardButton(text=f"Оплатить {m_price}₽ картой (ЮMoney)", url=url)])
         paid_online = True
     if paid_online:
         lines.append("После оплаты тариф поднимется автоматически в течение минуты.")

@@ -1770,6 +1770,8 @@ async def cb_tariff(cb: CallbackQuery, **kw):
         "• вакансии из рекомендаций hh, а не только по названию\n"
         "• A/B-тест писем, воронка приглашений и просмотров\n"
         "• автоподнятие резюме и напоминания\n\n"
+        f"⚡️ Есть и недельный тариф — {settings.weekly_price}₽/{settings.weekly_days} дней, "
+        "если уверен, что найдёшь быстро.\n"
         "<i>Один отклик по подписке стоит дешевле рубля.</i>\n"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[

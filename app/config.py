@@ -74,6 +74,8 @@ class Settings(BaseSettings):
     # === Оплата (мультиюзер) ===
     subscription_price: int = 399          # цена расширенного тарифа, ₽
     subscription_days: int = 30            # срок за одну оплату
+    weekly_price: int = 199                # недельный тариф, ₽
+    weekly_days: int = 7                   # срок недельного тарифа
     # ЮMoney: номер кошелька и секрет HTTP-уведомлений (в настройках кошелька).
     yoomoney_wallet: str = ""
     yoomoney_secret: str = ""
