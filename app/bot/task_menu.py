@@ -198,6 +198,8 @@ def _main_kb(is_active: bool, s: UserSettings) -> InlineKeyboardMarkup:
            callback_data="task:toggle_active")],
         [b(text=f"📈 Поднятие резюме: {'вкл' if s.resume_bump else 'выкл'}",
            callback_data="task:toggle_bump")],
+        [b(text=f"🧹 Авто-очистка отказов: {'вкл' if getattr(s, 'auto_clear_rejections', False) else 'выкл'}",
+           callback_data="task:toggle_clearrej")],
         [b(text=f"🎯 Умный отбор (ИИ): {('от ' + str(s.ai_score_min) + '%') if s.ai_score_enabled else 'выкл'}",
            callback_data="task:score")],
         [b(text="📋 Все задачи", callback_data="task:tasks"),
@@ -886,7 +888,9 @@ async def btn_stats(message: Message, **kw):
         "отклики и не тратит их на нерелевантные вакансии и дубли."
     )
     rows = [[InlineKeyboardButton(text="📨 Приглашения (тест)",
-                                  callback_data="resp:show")]]
+                                  callback_data="resp:show")],
+            [InlineKeyboardButton(text="🧹 Очистить отказы",
+                                  callback_data="resp:clearrej")]]
     if needs_test:
         # Эти вакансии УЖЕ прошли фильтр ИИ (релевантные), но требуют тест —
         # бот не может пройти его за тебя. Показываем список, чтобы откликнуться
@@ -896,6 +900,41 @@ async def btn_stats(message: Message, **kw):
             callback_data="stat:needstest:0")])
     await message.answer("\n".join(lines), parse_mode="HTML",
                          reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@router.callback_query(F.data == "resp:clearrej")
+async def cb_clear_rejections(cb: CallbackQuery, **kw):
+    """Пометить все непрочитанные отказы прочитанными — по кнопке."""
+    from app.parsers.hh_user_client import HHUserClient
+    async with async_session() as session:
+        user = await _load(session, cb)
+        if not user.hh_connected or not user.hh_access_token:
+            await cb.answer("Сначала подключи hh.ru", show_alert=True)
+            return
+        client = HHUserClient(
+            access_token=user.hh_access_token, refresh_token=user.hh_refresh_token or "",
+            resume_id=user.hh_resume_id,
+            expires_at=user.hh_token_expires.timestamp() if user.hh_token_expires else 0.0)
+    await cb.answer("Чищу отказы...")
+    nids = []
+    for page in range(5):
+        items, _, pages = await client.negotiations(per_page=100, page=page)
+        if not items:
+            break
+        nids += [str(it.get("id")) for it in items
+                 if (it.get("state") or {}).get("id") == "discard"
+                 and it.get("has_updates") and it.get("id")]
+        if page >= max(pages - 1, 0):
+            break
+    done = 0
+    for nid in nids[:100]:            # потолок за раз, чтобы не долбить API
+        if await client.mark_read(nid):
+            done += 1
+    if done:
+        await cb.message.answer(f"🧹 Готово: отмечено прочитанными <b>{done}</b> отказов. "
+                                "В чатах hh они больше не «новые».", parse_mode="HTML")
+    else:
+        await cb.message.answer("Непрочитанных отказов нет 👍")
 
 
 @router.callback_query(F.data == "resp:show")
@@ -1572,6 +1611,18 @@ async def cb_toggle_bump(cb: CallbackQuery, state: FSMContext, **kw):
         await session.commit()
     await _render_home(cb, state, edit=True)
     await cb.answer("Поднятие резюме включено" if s.resume_bump else "Выключено")
+
+
+@router.callback_query(F.data == "task:toggle_clearrej")
+async def cb_toggle_clearrej(cb: CallbackQuery, state: FSMContext, **kw):
+    async with async_session() as session:
+        holder, _, s = await _res(session, cb, state)
+        s.auto_clear_rejections = not getattr(s, "auto_clear_rejections", False)
+        holder.set_settings(s)
+        await session.commit()
+    await _render_home(cb, state, edit=True)
+    await cb.answer("Отказы будут гаситься автоматически" if s.auto_clear_rejections
+                    else "Авто-очистка отказов выключена")
 
 
 @router.callback_query(F.data == "task:toggle_ai")

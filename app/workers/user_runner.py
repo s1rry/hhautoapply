@@ -265,15 +265,16 @@ async def _refresh_negotiations(user_id: int, ctx: dict) -> None:
         if page >= max(pages - 1, 0):
             break
 
-    # Гасим непрочитанные ОТКАЗЫ: чтобы не висели «новыми» в чатах hh.
-    # Только новые (has_updates) и с потолком за цикл, чтобы не долбить API.
-    to_mark = [str(it.get("id")) for it in _all_neg_items
-               if (it.get("state") or {}).get("id") == "discard"
-               and it.get("has_updates") and it.get("id")]
-    for nid in to_mark[:30]:
-        await client.mark_read(nid)
-    if to_mark:
-        log.info("rejections_marked_read", user_id=user_id, count=min(len(to_mark), 30))
+    # Авто-гашение отказов — только если пользователь включил в настройках.
+    # Иначе чистит вручную кнопкой «Очистить отказы».
+    if ctx.get("auto_clear_rej"):
+        to_mark = [str(it.get("id")) for it in _all_neg_items
+                   if (it.get("state") or {}).get("id") == "discard"
+                   and it.get("has_updates") and it.get("id")]
+        for nid in to_mark[:30]:
+            await client.mark_read(nid)
+        if to_mark:
+            log.info("rejections_marked_read", user_id=user_id, count=min(len(to_mark), 30))
 
     async with async_session() as session:
         vac_task: dict[str, int] = {}
@@ -394,6 +395,7 @@ async def run_user_cycle(user_id: int) -> int:
         ctx["letter_model"] = letter_model
         ctx["account_cap"] = account_cap
         ctx["global_contact"] = (getattr(st_global, "contact", "") or "").strip()
+        ctx["auto_clear_rej"] = getattr(st_global, "auto_clear_rejections", False)
         try:
             total += await run_account_cycle(user_id, ctx, tasks)
         except Exception as e:
