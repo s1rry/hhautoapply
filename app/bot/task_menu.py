@@ -175,6 +175,19 @@ async def cb_survey(cb: CallbackQuery, state: FSMContext, **kw):
         user.survey_answer = key
         await session.commit()
     await _survey_report(cb, label)
+    # После негативного ответа — уточняем, что было не так, и напоминаем про
+    # поддержку. Это ловит проблему и возвращает человека.
+    if key in ("bug", "dislike"):
+        await state.set_state(SurveySG.text)
+        q = ("Жаль это слышать 😔 Напиши, пожалуйста, <b>что именно плохо работало</b> — "
+             "починим." if key == "bug" else
+             "Жаль, что не подошло 😔 Напиши, пожалуйста, <b>что не понравилось</b> — "
+             "нам важно.")
+        await cb.message.answer(
+            q + f"\n\nИ почему не написал в поддержку? Мы почти круглосуточно на связи "
+                f"и помогли бы: {settings.support_contact}", parse_mode="HTML")
+        await cb.answer()
+        return
     await cb.message.answer("Спасибо! Твой ответ очень помогает 🙏\n"
                             "Хочешь вернуться — доступ можно продлить в любой момент.")
     await cb.answer("Записал, спасибо!")
