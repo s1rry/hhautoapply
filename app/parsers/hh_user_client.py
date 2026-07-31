@@ -220,6 +220,21 @@ class HHUserClient:
             log.warning("user_vacancy_desc_error", vid=vacancy_id, error=str(e))
         return ""
 
+    async def mark_read(self, nid: str) -> bool:
+        """Пометить переписку прочитанной (открытие сообщений снимает флаг
+        «новое» в hh). Так отказы не висят непрочитанными в чатах."""
+        if not await self.ensure_token():
+            return False
+        headers = {"Authorization": f"Bearer {self.access_token}", "User-Agent": UA}
+        try:
+            async with httpx.AsyncClient(timeout=15) as c:
+                r = await c.get(f"{API}/negotiations/{nid}/messages",
+                                headers=headers, params={"per_page": 1})
+            return r.status_code == 200
+        except Exception as e:
+            log.warning("mark_read_error", nid=nid, error=str(e))
+            return False
+
     async def negotiation_messages(self, nid: str) -> list[dict]:
         """Переписка по отклику (GET /negotiations/{id}/messages).
         Возвращает список {text, author, created_at} — сообщения от работодателя

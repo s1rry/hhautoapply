@@ -242,12 +242,14 @@ async def _refresh_negotiations(user_id: int, ctx: dict) -> None:
     )
     msk_today = (datetime.now(timezone.utc) + timedelta(hours=3)).date().isoformat()
     by_vac: dict[str, dict] = {}
+    _all_neg_items: list[dict] = []
     for page in range(5):
         items, found, pages = await client.negotiations(100, page)
         if client.new_token:
             await _save_refreshed_token(ctx, client.new_token)
         if not items:
             break
+        _all_neg_items.extend(items)
         for it in items:
             vid = str((it.get("vacancy") or {}).get("id") or "")
             if not vid:
@@ -262,6 +264,16 @@ async def _refresh_negotiations(user_id: int, ctx: dict) -> None:
                            "today": upd == msk_today}
         if page >= max(pages - 1, 0):
             break
+
+    # Гасим непрочитанные ОТКАЗЫ: чтобы не висели «новыми» в чатах hh.
+    # Только новые (has_updates) и с потолком за цикл, чтобы не долбить API.
+    to_mark = [str(it.get("id")) for it in _all_neg_items
+               if (it.get("state") or {}).get("id") == "discard"
+               and it.get("has_updates") and it.get("id")]
+    for nid in to_mark[:30]:
+        await client.mark_read(nid)
+    if to_mark:
+        log.info("rejections_marked_read", user_id=user_id, count=min(len(to_mark), 30))
 
     async with async_session() as session:
         vac_task: dict[str, int] = {}

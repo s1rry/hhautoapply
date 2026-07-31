@@ -885,7 +885,7 @@ async def btn_stats(message: Message, **kw):
         "\nℹ️ «Фильтр ИИ» и «уже откликались» — это норма: бот бережёт "
         "отклики и не тратит их на нерелевантные вакансии и дубли."
     )
-    rows = [[InlineKeyboardButton(text="📨 Ответы работодателей (тест)",
+    rows = [[InlineKeyboardButton(text="📨 Приглашения (тест)",
                                   callback_data="resp:show")]]
     if needs_test:
         # Эти вакансии УЖЕ прошли фильтр ИИ (релевантные), но требуют тест —
@@ -900,9 +900,10 @@ async def btn_stats(message: Message, **kw):
 
 @router.callback_query(F.data == "resp:show")
 async def cb_responses(cb: CallbackQuery, **kw):
-    """Ответы работодателей: приглашения и отказы с текстом сообщений (через API)."""
+    """Приглашения работодателей с текстом (через API). Отказы не показываем —
+    они шум и гасятся автоматически (помечаются прочитанными)."""
     from app.parsers.hh_user_client import HHUserClient
-    STATE_LABEL = {"interview": "✅ Приглашение", "discard": "❌ Отказ"}
+    STATE_LABEL = {"interview": "✅ Приглашение"}
     async with async_session() as session:
         user = await _load(session, cb)
         if not user.hh_connected or not user.hh_access_token:
@@ -918,10 +919,10 @@ async def cb_responses(cb: CallbackQuery, **kw):
     resp = [it for it in items if (it.get("state") or {}).get("id") in STATE_LABEL]
     resp.sort(key=lambda it: it.get("updated_at") or "", reverse=True)
     if not resp:
-        await cb.message.answer("Пока нет ответов от работодателей. "
-                                "Приглашения и отказы появятся здесь.")
+        await cb.message.answer("Пока нет приглашений. "
+                                "Как работодатель позовёт — появится здесь.")
         return
-    lines = ["📨 <b>Ответы работодателей</b>\n"]
+    lines = ["📨 <b>Приглашения от работодателей</b>\n"]
     for it in resp[:10]:                # ограничиваем: по каждому ещё запрос за текстом
         vac = it.get("vacancy") or {}
         title = (vac.get("name") or "вакансия")[:60]
