@@ -46,6 +46,30 @@ AREA_NAMES = {1: "Москва", 2: "Санкт-Петербург", 113: "Вс�
               3: "Екатеринбург", 88: "Казань", 1229: "Кемерово", 66: "Нижний Новгород",
               53: "Краснодар", 78: "Самара", 76: "Ростов-на-Дону"}
 
+
+async def resolve_area(name: str) -> tuple[int, str] | None:
+    """Найти регион hh по названию через публичный API /suggests/areas.
+    Возвращает (id, официальное_название) или None. Так принимаем ЛЮБОЙ город,
+    а не только жёстко зашитые крупные."""
+    import httpx
+    q = (name or "").strip()
+    if not q:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get("https://api.hh.ru/suggests/areas",
+                            params={"text": q}, headers={"User-Agent": "hhautoapply/1.0"})
+        if r.status_code == 200:
+            for it in (r.json() or {}).get("items", []):
+                aid = it.get("id")
+                if aid and str(aid).isdigit():
+                    title = it.get("text") or q
+                    AREA_NAMES[int(aid)] = title.split(",")[0].strip()  # кэш имени
+                    return int(aid), title
+    except Exception as e:
+        log.warning("resolve_area_error", q=q, error=str(e))
+    return None
+
 FREE_DAILY_LIMIT = 15
 PAID_DAILY_LIMIT = 200
 TRIAL_DAILY_LIMIT = 50    # пробный: меньше платного, чтобы не выгрести рынок бесплатно
@@ -921,20 +945,21 @@ async def cb_clear_rejections(cb: CallbackQuery, **kw):
         items, _, pages = await client.negotiations(per_page=100, page=page)
         if not items:
             break
+        # ВСЕ отказы, а не только с has_updates: флаг ненадёжен, а «висящие»
+        # отказы бывают уже без него. Помечаем прочитанными все discard.
         nids += [str(it.get("id")) for it in items
-                 if (it.get("state") or {}).get("id") == "discard"
-                 and it.get("has_updates") and it.get("id")]
+                 if (it.get("state") or {}).get("id") == "discard" and it.get("id")]
         if page >= max(pages - 1, 0):
             break
     done = 0
-    for nid in nids[:100]:            # потолок за раз, чтобы не долбить API
+    for nid in nids[:200]:            # потолок за раз, чтобы не долбить API
         if await client.mark_read(nid):
             done += 1
     if done:
         await cb.message.answer(f"🧹 Готово: отмечено прочитанными <b>{done}</b> отказов. "
                                 "В чатах hh они больше не «новые».", parse_mode="HTML")
     else:
-        await cb.message.answer("Непрочитанных отказов нет 👍")
+        await cb.message.answer("Отказов не найдено 👍")
 
 
 @router.callback_query(F.data == "resp:show")
@@ -1501,11 +1526,25 @@ async def cb_letters(cb: CallbackQuery, state: FSMContext, **kw):
 @router.callback_query(F.data.startswith("task:lmode:"))
 async def cb_lmode(cb: CallbackQuery, state: FSMContext, **kw):
     mode = cb.data.split(":")[2]
+    # Режим писем — настройка аккаунта: пишем в ОБЩИЕ настройки пользователя,
+    # чтобы применялось ко всем задачам (а не терялось в снимке одной задачи).
     async with async_session() as session:
-        holder, _, s = await _res(session, cb, state)
-        s.letter_mode = mode
-        holder.set_settings(s)
+        user = await _load(session, cb)
+        us = user.get_settings()
+        us.letter_mode = mode
+        user.set_settings(us)
+        # Синхронизируем и снимки задач, чтобы отображение совпадало.
+        from app.models.search_task import SearchTask
+        from sqlalchemy import select as _sel
+        tasks = (await session.execute(
+            _sel(SearchTask).where(SearchTask.user_id == user.id,
+                                   SearchTask.settings_json.is_not(None)))).scalars().all()
+        for t in tasks:
+            ts = t.get_settings()
+            ts.letter_mode = mode
+            t.set_settings(ts)
         await session.commit()
+        s = us
     await cb.message.edit_reply_markup(reply_markup=_letters_kb(s))
     await cb.answer(LETTER_MODES.get(mode, mode))
 
@@ -1767,11 +1806,14 @@ async def on_value(message: Message, state: FSMContext, **kw):
         elif field == "excluded_text":
             s.excluded_text = raw
         elif field == "areas":
-            parts = [p.strip().lower() for p in re.split(r"[,/\n]+", raw) if p.strip()]
+            parts = [p.strip() for p in re.split(r"[,/\n]+", raw) if p.strip()]
             ids: list[int] = []
             unknown: list[str] = []
             for p in parts:
-                aid = AREAS.get(p)
+                aid = AREAS.get(p.lower())        # быстрый путь для крупных
+                if not aid:                        # иначе спрашиваем hh про любой город
+                    res = await resolve_area(p)
+                    aid = res[0] if res else None
                 if aid:
                     if aid not in ids:
                         ids.append(aid)
@@ -1780,9 +1822,9 @@ async def on_value(message: Message, state: FSMContext, **kw):
             if ids:
                 s.areas = ids
                 if unknown:
-                    err = "Не узнал: " + ", ".join(unknown) + " — остальные сохранил."
+                    err = "Не нашёл на hh: " + ", ".join(unknown) + " — остальные сохранил."
             else:
-                err = "Не узнал город. Попробуй: Москва, СПб, Казань, вся Россия (можно через запятую)."
+                err = "Не нашёл такой город на hh. Проверь название (например: Коломна, Москва, вся Россия)."
         elif field == "salary_min":
             if raw.isdigit():
                 s.salary_min = int(raw)

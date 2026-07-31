@@ -56,13 +56,16 @@ async def _build_letter(item: dict, title: str, st, resume_text: str,
                         ab_index: int = 0,
                         model: str | None = None,
                         full_desc: str = "",
-                        global_contact: str = "") -> tuple[str, str | None]:
+                        global_contact: str = "",
+                        global_letter_mode: str = "") -> tuple[str, str | None]:
     """Собрать письмо. Возвращает (текст, вариант A/B|None).
       off      — без письма ("")
       required — письмо только если вакансия его требует
       always   — всегда; ИИ-персонализация при ai_enabled (иначе шаблон).
     Если включён A/B и заданы оба письма — по очереди шлём A/B как есть."""
-    mode = getattr(st, "letter_mode", "always")
+    # Режим писем — настройка АККАУНТА (из общих настроек), а не снимка задачи:
+    # пользователь меняет в одном месте, а снимок задачи мог хранить старый дефолт.
+    mode = (global_letter_mode or "").strip() or getattr(st, "letter_mode", "always")
     if mode == "off":
         return "", None
     if mode == "required" and not item.get("response_letter_required"):
@@ -395,6 +398,7 @@ async def run_user_cycle(user_id: int) -> int:
         ctx["letter_model"] = letter_model
         ctx["account_cap"] = account_cap
         ctx["global_contact"] = (getattr(st_global, "contact", "") or "").strip()
+        ctx["global_letter_mode"] = getattr(st_global, "letter_mode", "always")
         ctx["auto_clear_rej"] = getattr(st_global, "auto_clear_rejections", False)
         try:
             total += await run_account_cycle(user_id, ctx, tasks)
@@ -699,7 +703,8 @@ async def run_account_cycle(user_id: int, ctx: dict, tasks: list[dict]) -> int:
                 letter, letter_variant = await _build_letter(
                     item, title, st, resume_text, ab_index=applied,
                     model=ctx.get("letter_model"), full_desc=full_desc,
-                    global_contact=ctx.get("global_contact", ""))
+                    global_contact=ctx.get("global_contact", ""),
+                    global_letter_mode=ctx.get("global_letter_mode", ""))
                 try:
                     if item.get("has_test"):
                         # Вакансия с тестом: обычный API-отклик не пройдёт.
