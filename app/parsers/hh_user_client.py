@@ -220,6 +220,32 @@ class HHUserClient:
             log.warning("user_vacancy_desc_error", vid=vacancy_id, error=str(e))
         return ""
 
+    async def negotiation_messages(self, nid: str) -> list[dict]:
+        """Переписка по отклику (GET /negotiations/{id}/messages).
+        Возвращает список {text, author, created_at} — сообщения от работодателя
+        и свои. Чистый HTTP, браузер не нужен."""
+        if not await self.ensure_token():
+            return []
+        headers = {"Authorization": f"Bearer {self.access_token}", "User-Agent": UA}
+        try:
+            async with httpx.AsyncClient(timeout=20) as c:
+                r = await c.get(f"{API}/negotiations/{nid}/messages", headers=headers,
+                                params={"per_page": 50})
+            if r.status_code == 200:
+                out = []
+                for m in ((r.json() or {}).get("items") or []):
+                    author = (m.get("author") or {}).get("participant_type") or ""
+                    out.append({
+                        "text": (m.get("text") or "").strip(),
+                        "from_employer": author == "employer",
+                        "created_at": (m.get("created_at") or "")[:16],
+                    })
+                return out
+            log.warning("negotiation_messages_failed", nid=nid, status=r.status_code)
+        except Exception as e:
+            log.warning("negotiation_messages_error", nid=nid, error=str(e))
+        return []
+
     async def bump_resume(self) -> bool:
         """Поднять резюме на hh (POST /resumes/{id}/publish). 204 = успех, 429 = рано."""
         if not self.resume_id or not await self.ensure_token():

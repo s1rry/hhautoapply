@@ -885,15 +885,59 @@ async def btn_stats(message: Message, **kw):
         "\nℹ️ «Фильтр ИИ» и «уже откликались» — это норма: бот бережёт "
         "отклики и не тратит их на нерелевантные вакансии и дубли."
     )
-    kb = None
+    rows = [[InlineKeyboardButton(text="📨 Ответы работодателей (тест)",
+                                  callback_data="resp:show")]]
     if needs_test:
         # Эти вакансии УЖЕ прошли фильтр ИИ (релевантные), но требуют тест —
         # бот не может пройти его за тебя. Показываем список, чтобы откликнуться
         # вручную на hh.
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+        rows.append([InlineKeyboardButton(
             text=f"📝 Показать вакансии с тестом ({needs_test})",
-            callback_data="stat:needstest:0")]])
-    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=kb)
+            callback_data="stat:needstest:0")])
+    await message.answer("\n".join(lines), parse_mode="HTML",
+                         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@router.callback_query(F.data == "resp:show")
+async def cb_responses(cb: CallbackQuery, **kw):
+    """Ответы работодателей: приглашения и отказы с текстом сообщений (через API)."""
+    from app.parsers.hh_user_client import HHUserClient
+    STATE_LABEL = {"interview": "✅ Приглашение", "discard": "❌ Отказ"}
+    async with async_session() as session:
+        user = await _load(session, cb)
+        if not user.hh_connected or not user.hh_access_token:
+            await cb.answer("Сначала подключи hh.ru", show_alert=True)
+            return
+        client = HHUserClient(
+            access_token=user.hh_access_token, refresh_token=user.hh_refresh_token or "",
+            resume_id=user.hh_resume_id,
+            expires_at=user.hh_token_expires.timestamp() if user.hh_token_expires else 0.0)
+    await cb.answer("Загружаю ответы...")
+    items, _, _ = await client.negotiations(per_page=100, page=0)
+    # Только реальные ответы работодателя (приглашение/отказ), свежие сверху.
+    resp = [it for it in items if (it.get("state") or {}).get("id") in STATE_LABEL]
+    resp.sort(key=lambda it: it.get("updated_at") or "", reverse=True)
+    if not resp:
+        await cb.message.answer("Пока нет ответов от работодателей. "
+                                "Приглашения и отказы появятся здесь.")
+        return
+    lines = ["📨 <b>Ответы работодателей</b>\n"]
+    for it in resp[:10]:                # ограничиваем: по каждому ещё запрос за текстом
+        vac = it.get("vacancy") or {}
+        title = (vac.get("name") or "вакансия")[:60]
+        url = vac.get("alternate_url") or ""
+        label = STATE_LABEL[(it.get("state") or {})["id"]]
+        head = f"{label} · <a href=\"{url}\">{title}</a>" if url else f"{label} · {title}"
+        # текст последнего сообщения работодателя
+        msg = ""
+        if it.get("has_updates") or True:
+            msgs = await client.negotiation_messages(str(it.get("id") or ""))
+            emp = [m for m in msgs if m["from_employer"] and m["text"]]
+            if emp:
+                msg = emp[-1]["text"][:300]
+        lines.append(head + (f"\n<i>{msg}</i>" if msg else ""))
+    await cb.message.answer("\n\n".join(lines), parse_mode="HTML",
+                            disable_web_page_preview=True)
 
 
 @router.callback_query(F.data.startswith("stat:needstest:"))
