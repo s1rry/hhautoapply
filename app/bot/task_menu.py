@@ -958,10 +958,11 @@ async def cb_clear_rejections(cb: CallbackQuery, **kw):
         items, _, pages = await client.negotiations(per_page=100, page=page)
         if not items:
             break
-        # ВСЕ отказы, а не только с has_updates: флаг ненадёжен, а «висящие»
-        # отказы бывают уже без него. Помечаем прочитанными все discard.
+        # Только НЕПРОЧИТАННЫЕ отказы (has_updates) — иначе кнопка каждый раз
+        # перемечает все и всегда показывает потолок 200, не «заканчиваясь».
         nids += [str(it.get("id")) for it in items
-                 if (it.get("state") or {}).get("id") == "discard" and it.get("id")]
+                 if (it.get("state") or {}).get("id") == "discard"
+                 and it.get("has_updates") and it.get("id")]
         if page >= max(pages - 1, 0):
             break
     done = 0
@@ -969,10 +970,10 @@ async def cb_clear_rejections(cb: CallbackQuery, **kw):
         if await client.mark_read(nid):
             done += 1
     if done:
-        await cb.message.answer(f"🧹 Готово: отмечено прочитанными <b>{done}</b> отказов. "
+        await cb.message.answer(f"🧹 Готово: отмечено прочитанными <b>{done}</b> новых отказов. "
                                 "В чатах hh они больше не «новые».", parse_mode="HTML")
     else:
-        await cb.message.answer("Отказов не найдено 👍")
+        await cb.message.answer("Непрочитанных отказов нет 👍")
 
 
 @router.callback_query(F.data == "resp:show")

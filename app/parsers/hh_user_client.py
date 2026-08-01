@@ -58,8 +58,9 @@ def classify_apply(status_code: int, body_text: str) -> tuple[bool | str, dict]:
         return False, {"error": err_value or "bad_request", "status": status_code, "data": d}
     if status_code == 401:
         return False, {"error": "auth_expired"}
-    if status_code == 403 and "token_revoked" in (body_text or "").lower():
-        # Пользователь отозвал доступ на hh — сам бот починить это не может.
+    if status_code == 403 and ("token_revoked" in (body_text or "").lower()
+                               or "bad_authorization" in (body_text or "").lower()):
+        # Доступ к hh мёртв (отозван или токен протух) — нужен переконнект.
         return False, {"error": "token_revoked"}
     if status_code == 404:
         return "already", {"error": "not_found"}
@@ -117,6 +118,11 @@ class HHUserClient:
                 }
                 return True
             log.warning("user_token_refresh_failed", status=r.status_code, body=r.text[:200])
+            # hh не смог обновить токен (invalid_grant / token not found) —
+            # доступ мёртв, нужен переконнект. Помечаем, чтобы уведомить юзера.
+            low = (r.text or "").lower()
+            if r.status_code in (400, 401) or "invalid" in low or "not found" in low:
+                self.token_revoked = True
         except Exception as e:
             log.warning("user_token_refresh_error", error=str(e))
         return bool(self.access_token)
@@ -139,7 +145,7 @@ class HHUserClient:
                 log.info("user_search_ok", text=str(q.get("text"))[:80],
                          page=page, found=data.get("found"), items=len(items))
                 return items
-            if r.status_code == 403 and "token_revoked" in (r.text or "").lower():
+            if r.status_code == 403 and ("token_revoked" in (r.text or "").lower() or "bad_authorization" in (r.text or "").lower()):
                 self.token_revoked = True
             log.warning("user_search_failed", status=r.status_code, body=r.text[:200])
         except Exception as e:
@@ -168,7 +174,7 @@ class HHUserClient:
                 log.info("user_recommend_ok", resume=resume_id, page=page,
                          found=data.get("found"), items=len(items))
                 return items
-            if r.status_code == 403 and "token_revoked" in (r.text or "").lower():
+            if r.status_code == 403 and ("token_revoked" in (r.text or "").lower() or "bad_authorization" in (r.text or "").lower()):
                 self.token_revoked = True
             log.warning("user_recommend_failed", status=r.status_code, body=r.text[:200])
         except Exception as e:
@@ -190,7 +196,7 @@ class HHUserClient:
             if r.status_code == 200:
                 data = r.json() or {}
                 return data.get("items") or [], data.get("found") or 0, data.get("pages") or 0
-            if r.status_code == 403 and "token_revoked" in (r.text or "").lower():
+            if r.status_code == 403 and ("token_revoked" in (r.text or "").lower() or "bad_authorization" in (r.text or "").lower()):
                 self.token_revoked = True
             log.warning("user_negotiations_failed", status=r.status_code, body=r.text[:200])
         except Exception as e:
