@@ -43,6 +43,15 @@ SEL_CODE_CONTAINER = 'div[data-qa="account-login-code-input"]'
 SEL_PIN = 'input[data-qa="magritte-pincode-input-field"]'
 SEL_CAPTCHA = 'img[data-qa="account-captcha-picture"]'
 SEL_CAPTCHA_INPUT = 'input[data-qa="account-captcha-input"]'
+# hh переехал на дизайн magritte и переименовал поля. Старый селектор капчи
+# перестал находиться (таймаут). Пробуем несколько кандидатов, включая
+# стабильное name="captchaText" и новые magritte-имена.
+CAPTCHA_INPUT_SELECTORS = [
+    'input[data-qa="account-captcha-input"]',
+    'input[name="captchaText"]',
+    'input[data-qa="magritte-input"]',
+    'form:has(img[data-qa="account-captcha-picture"]) input[type="text"]',
+]
 
 
 class OTPLoginSession:
@@ -132,11 +141,20 @@ class OTPLoginSession:
         """
         if not self.page:
             return {"error": "no_session"}
-        try:
-            await self.page.fill(SEL_CAPTCHA_INPUT, text.strip())
-            await self.page.press(SEL_CAPTCHA_INPUT, "Enter")
-        except Exception as e:
-            return {"error": f"captcha_fill: {e}"}
+        # Пробуем селекторы капчи по очереди — hh мог переименовать поле.
+        filled = False
+        for sel in CAPTCHA_INPUT_SELECTORS:
+            try:
+                el = await self.page.wait_for_selector(sel, timeout=4000, state="visible")
+                if el:
+                    await el.fill(text.strip())
+                    await el.press("Enter")
+                    filled = True
+                    break
+            except Exception:
+                continue
+        if not filled:
+            return {"error": "captcha_input_not_found"}
         # Капча снова видна → введена неверно, отдаём новую картинку.
         try:
             cap = await self.page.wait_for_selector(SEL_CAPTCHA, timeout=3000, state="visible")
