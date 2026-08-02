@@ -176,15 +176,42 @@ class OTPLoginSession:
         """Ввести код, забрать OAuth-код, сохранить токен и cookies."""
         if not self.page:
             return {"error": "no_session"}
+        code = code.strip()
+        # hh перешёл на magritte-пинкод из отдельных ячеек. Единый fill() кладёт
+        # весь код в первую ячейку — он остаётся неполным, hh его не принимает,
+        # редиректа нет → таймаут no_oauth_code (а код-то верный). Поэтому вводим
+        # по цифрам: у сегментного пинкода фокус сам перескакивает на след. ячейку,
+        # у обычного поля цифры просто дописываются. Работает в обоих случаях.
         try:
-            await self.page.fill(SEL_PIN, code)
-            await self.page.press(SEL_PIN, "Enter")
+            cells = self.page.locator(SEL_PIN)
+            n = await cells.count()
+            if n > 1:
+                for i, ch in enumerate(code):
+                    if i < n:
+                        await cells.nth(i).fill(ch)
+            else:
+                await cells.first.click()
+                await self.page.keyboard.type(code, delay=90)
+            # Подстраховка: некоторые формы не сабмитятся автоматически.
+            try:
+                await self.page.keyboard.press("Enter")
+            except Exception:
+                pass
         except Exception as e:
             return {"error": f"fill_code: {e}"}
 
+        # Редирект hhandroid://...code= иногда приходит не мгновенно (медленный
+        # прогон через туннель). Даём 45с вместо 30с.
         try:
-            auth_code = await asyncio.wait_for(self.code_future, timeout=30)
+            auth_code = await asyncio.wait_for(self.code_future, timeout=45)
         except asyncio.TimeoutError:
+            # Сохраняем экран, чтобы понять, какой шаг hh показал вместо редиректа.
+            try:
+                CAPTCHA_FILE.parent.mkdir(parents=True, exist_ok=True)
+                await self.page.screenshot(path=str(CAPTCHA_FILE.parent / "hh_code_timeout.png"))
+                log.warning("otp_no_redirect", url=self.page.url)
+            except Exception:
+                pass
             return {"error": "no_oauth_code"}
         if not auth_code:
             return {"error": "empty_oauth_code"}

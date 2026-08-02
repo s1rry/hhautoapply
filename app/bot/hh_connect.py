@@ -255,6 +255,10 @@ async def connect_code(message: Message, state: FSMContext, **kw):
             user.hh_refresh_token = token.get("refresh_token", "")
             user.hh_token_expires = expires
             user.hh_connected = True
+            # Реконнект = «хочу, чтобы бот снова работал». Токен мог отвалиться и
+            # сбросить автоотклик на паузу (is_active=False) — тогда после
+            # переподключения бот молча стоял. Возобновляем автоотклик.
+            user.is_active = True
             if res.get("cookies"):
                 user.hh_cookies = json.dumps(res["cookies"])
             if resume_id:
