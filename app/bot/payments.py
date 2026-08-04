@@ -294,9 +294,15 @@ async def _clients_chunks() -> list[str]:
     from app.models.user import User
     from app.models.application import Application, ApplicationStatus
     from app.models.search_task import SearchTask
+    from app.models.payment import Payment
     now = _dt.datetime.now(_dt.timezone.utc)
     async with async_session() as session:
         users = (await session.execute(select(User).order_by(User.id))).scalars().all()
+        # Реально заплатившие — есть успешный платёж. Нужен, чтобы отличить
+        # оплативших от пробников: у обоих tier="paid", но 💎 у всех подряд не
+        # даёт увидеть, кто именно занёс деньги.
+        payers = set(r[0] for r in (await session.execute(
+            select(func.distinct(Payment.user_id)).where(Payment.status == "paid"))).all())
         # Отклики всего и за сегодня — одним запросом на всех, потом разложим.
         sent_total = dict((uid, n) for uid, n in (await session.execute(
             select(Application.user_id, func.count(Application.id))
@@ -314,15 +320,18 @@ async def _clients_chunks() -> list[str]:
     total = len(users)
     paid = sum(1 for u in users if u.tier == "paid")
     connected = sum(1 for u in users if u.hh_connected)
-    lines = [f"👥 <b>Клиенты: {total}</b>  •  💎 платных/пробных: {paid}  •  🔗 подключили hh: {connected}\n"]
+    lines = [f"👥 <b>Клиенты: {total}</b>  •  💎 подписка/пробный: {paid}  •  "
+             f"💳 оплатили: {len(payers)}  •  🔗 подключили hh: {connected}\n"]
     for u in users:
-        # Срок доступа
+        # Срок доступа. 💳 — реально оплативший (есть платёж), 💎 — пробный
+        # с тем же tier="paid". Иначе оплативших не отличить от пробных.
+        mark = "💳" if u.id in payers else "💎"
         if u.tier == "paid" and u.tier_until:
             tu = u.tier_until
             if tu.tzinfo is None:
                 tu = tu.replace(tzinfo=_dt.timezone.utc)
             days = (tu - now).days
-            access = f"💎 ещё {days}д" if days >= 0 else "💎 истёк"
+            access = f"{mark} ещё {days}д" if days >= 0 else f"{mark} истёк"
         else:
             access = "🆓 free"
         hh = "🔗" if u.hh_connected else "➖"
