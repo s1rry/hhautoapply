@@ -123,6 +123,59 @@ async def cmd_grant(message: Message, **kw):
         await message.answer("Не удалось (пользователь не найден).")
 
 
+@router.message(Command("reapply"))
+async def cmd_reapply(message: Message, **kw):
+    """Восстановить пропущенный платёж ЮКассы. Только админ: /reapply <payment_id>.
+
+    Нужно, когда вебхук не долетел (сервер/туннель лежал): заново тянем платёж
+    из API, проверяем succeeded и выдаём доступ. Идемпотентно — повтор не навредит.
+    """
+    if str(message.chat.id) != settings.tg_admin_chat_id:
+        return
+    parts = (message.text or "").split()
+    if len(parts) < 2:
+        await message.answer("Использование: /reapply <payment_id ЮКассы>")
+        return
+    payment_id = parts[1].strip()
+    verified = await yookassa.fetch_payment(payment_id)
+    if not verified:
+        await message.answer("Платёж не найден в ЮКассе (проверь id).")
+        return
+    if verified.get("status") != "succeeded":
+        await message.answer(f"Статус платежа: {verified.get('status')} — не succeeded, не выдаю.")
+        return
+    meta = verified.get("metadata") or {}
+    try:
+        telegram_id = int(meta.get("telegram_id", "0"))
+    except ValueError:
+        telegram_id = 0
+    if not telegram_id:
+        await message.answer("У платежа нет telegram_id в metadata — выдать некому. "
+                             "Спроси у клиента его @username и используй /grant.")
+        return
+    try:
+        amount = int(float((verified.get("amount") or {}).get("value", "0")))
+    except ValueError:
+        amount = 0
+    try:
+        days = int(meta.get("days") or settings.subscription_days)
+    except ValueError:
+        days = settings.subscription_days
+    async with async_session() as session:
+        ok = await apply_payment(session, telegram_id, provider="yookassa",
+                                 amount=amount, days=days, operation_id=payment_id)
+    if ok:
+        await message.answer(f"✅ Выдал доступ: telegram_id {telegram_id}, {days} дн., {amount}₽.")
+        try:
+            await message.bot.send_message(
+                telegram_id, "✅ Оплата получена, расширенный тариф активирован. Спасибо!")
+        except Exception:
+            pass
+    else:
+        await message.answer(f"Не выдал: платёж уже применён ранее или пользователь "
+                             f"{telegram_id} не найден в базе.")
+
+
 def _is_admin(chat_id) -> bool:
     return str(chat_id) == str(settings.tg_admin_chat_id or "")
 
