@@ -98,7 +98,10 @@ class OTPLoginSession:
         self.page.on("request", _on_req)
 
         try:
-            await self.page.goto(AUTHORIZE_URL, wait_until="load", timeout=30000)
+            # wait_until="load" ждёт ВСЕ ресурсы hh — через туннель не укладывается
+            # в 30с (Timeout goto). Нам хватает domcontentloaded: сразу за goto мы
+            # всё равно ждём поле телефона отдельным wait_for_selector.
+            await self.page.goto(AUTHORIZE_URL, wait_until="domcontentloaded", timeout=60000)
         except Exception as e:
             await self.cancel()
             return {"error": f"goto: {e}"}
