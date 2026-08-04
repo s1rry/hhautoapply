@@ -141,19 +141,57 @@ class OTPLoginSession:
         """
         if not self.page:
             return {"error": "no_session"}
-        # Пробуем селекторы капчи по очереди — hh мог переименовать поле.
+        text = text.strip()
+        # Пробуем известные селекторы капчи по очереди — hh мог переименовать поле.
         filled = False
         for sel in CAPTCHA_INPUT_SELECTORS:
             try:
-                el = await self.page.wait_for_selector(sel, timeout=4000, state="visible")
+                el = await self.page.wait_for_selector(sel, timeout=2500, state="visible")
                 if el:
-                    await el.fill(text.strip())
+                    await el.fill(text)
                     await el.press("Enter")
                     filled = True
                     break
             except Exception:
                 continue
+        # Фолбэк по смыслу: hh постоянно переименовывает поле, поэтому не полагаемся
+        # на data-qa. На экране капчи есть ровно одно пустое видимое текстовое поле
+        # (телефон уже введён на прошлом шаге) — это и есть поле капчи.
         if not filled:
+            try:
+                for el in await self.page.query_selector_all("input"):
+                    try:
+                        if not await el.is_visible():
+                            continue
+                        typ = (await el.get_attribute("type") or "text").lower()
+                        if typ in ("hidden", "checkbox", "radio", "button", "submit", "password", "tel"):
+                            continue
+                        if (await el.input_value() or "").strip():
+                            continue  # уже заполнено (телефон) — не трогаем
+                        await el.fill(text)
+                        await el.press("Enter")
+                        filled = True
+                        break
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+        if not filled:
+            # Диагностика: сохраняем экран и логируем поля, чтобы увидеть реальное поле.
+            try:
+                CAPTCHA_FILE.parent.mkdir(parents=True, exist_ok=True)
+                await self.page.screenshot(path=str(CAPTCHA_FILE.parent / "hh_captcha_nofield.png"))
+                metas = []
+                for el in await self.page.query_selector_all("input"):
+                    metas.append({
+                        "type": await el.get_attribute("type"),
+                        "name": await el.get_attribute("name"),
+                        "data-qa": await el.get_attribute("data-qa"),
+                        "visible": await el.is_visible(),
+                    })
+                log.warning("captcha_input_not_found", inputs=metas, url=self.page.url)
+            except Exception:
+                pass
             return {"error": "captcha_input_not_found"}
         # Капча снова видна → введена неверно, отдаём новую картинку.
         try:
