@@ -10,14 +10,16 @@ OAuth-токеном пользователя (HHUserClient), поэтому ч�
 from __future__ import annotations
 
 import datetime as _dt
+import json as _json
 
 import structlog
 from aiohttp import web
-from sqlalchemy import select
+from sqlalchemy import select, delete
 
 from app.config import settings
 from app.database import async_session
 from app.models.user import User
+from app.models.favorite import Favorite
 from app.parsers.hh_user_client import HHUserClient
 from app.api.webapp_auth import telegram_id_from_init_data
 from app.api import hh_dicts
@@ -185,6 +187,110 @@ async def _search(request: web.Request) -> web.Response:
     })
 
 
+def _vacancy_detail(v: dict) -> dict:
+    """Полная карточка вакансии hh → нормализованный ответ для детальной страницы."""
+    salary = v.get("salary") or {}
+    emp = v.get("employer") or {}
+    area = v.get("area") or {}
+    addr = v.get("address") or {}
+    return {
+        "id": v.get("id"),
+        "name": v.get("name"),
+        "company": emp.get("name"),
+        "company_logo": (emp.get("logo_urls") or {}).get("240") if emp.get("logo_urls") else None,
+        "company_url": emp.get("alternate_url"),
+        "area": area.get("name"),
+        "address": addr.get("raw"),
+        "salary_from": salary.get("from"),
+        "salary_to": salary.get("to"),
+        "currency": salary.get("currency"),
+        "experience": (v.get("experience") or {}).get("name"),
+        "schedule": (v.get("schedule") or {}).get("name"),
+        "employment": (v.get("employment") or {}).get("name"),
+        "description": v.get("description"),  # HTML
+        "key_skills": [s.get("name") for s in (v.get("key_skills") or []) if s.get("name")],
+        "published_at": v.get("published_at"),
+        "url": v.get("alternate_url"),
+    }
+
+
+async def _vacancy(request: web.Request) -> web.Response:
+    tid = request["telegram_id"]
+    vid = request.match_info["vid"]
+    async with async_session() as session:
+        user = (await session.execute(
+            select(User).where(User.telegram_id == tid))).scalar_one_or_none()
+        if not user:
+            return web.json_response({"error": "user_not_found"}, status=404)
+        client = await _client_for(user)
+        if client is None:
+            return web.json_response({"error": "hh_not_connected"}, status=409)
+        data = await client.get_vacancy(vid)
+        await _persist_token(session, user, client)
+    if not data:
+        if client.token_revoked:
+            return web.json_response({"error": "hh_token_revoked"}, status=409)
+        return web.json_response({"error": "not_found"}, status=404)
+    return web.json_response(_vacancy_detail(data))
+
+
+async def _favorites_list(request: web.Request) -> web.Response:
+    tid = request["telegram_id"]
+    async with async_session() as session:
+        user = (await session.execute(
+            select(User).where(User.telegram_id == tid))).scalar_one_or_none()
+        if not user:
+            return web.json_response({"items": []})
+        rows = (await session.execute(
+            select(Favorite).where(Favorite.user_id == user.id, Favorite.kind == "vacancy")
+            .order_by(Favorite.created_at.desc()))).scalars().all()
+    items = []
+    for r in rows:
+        try:
+            items.append(_json.loads(r.snapshot_json))
+        except Exception:
+            items.append({"id": r.hh_id})
+    return web.json_response({"items": items, "ids": [r.hh_id for r in rows]})
+
+
+async def _favorite_add(request: web.Request) -> web.Response:
+    tid = request["telegram_id"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "bad_json"}, status=400)
+    hh_id = str(body.get("id") or "").strip()
+    if not hh_id:
+        return web.json_response({"error": "no_id"}, status=400)
+    snapshot = _json.dumps(body, ensure_ascii=False)[:8000]
+    async with async_session() as session:
+        user = (await session.execute(
+            select(User).where(User.telegram_id == tid))).scalar_one_or_none()
+        if not user:
+            return web.json_response({"error": "user_not_found"}, status=404)
+        exists = (await session.execute(
+            select(Favorite).where(Favorite.user_id == user.id,
+                                   Favorite.kind == "vacancy", Favorite.hh_id == hh_id)
+        )).scalar_one_or_none()
+        if not exists:
+            session.add(Favorite(user_id=user.id, kind="vacancy", hh_id=hh_id, snapshot_json=snapshot))
+            await session.commit()
+    return web.json_response({"ok": True, "id": hh_id})
+
+
+async def _favorite_delete(request: web.Request) -> web.Response:
+    tid = request["telegram_id"]
+    hh_id = request.match_info["vid"]
+    async with async_session() as session:
+        user = (await session.execute(
+            select(User).where(User.telegram_id == tid))).scalar_one_or_none()
+        if user:
+            await session.execute(delete(Favorite).where(
+                Favorite.user_id == user.id, Favorite.kind == "vacancy", Favorite.hh_id == hh_id))
+            await session.commit()
+    return web.json_response({"ok": True, "id": hh_id})
+
+
 async def _dictionaries(_request: web.Request) -> web.Response:
     return web.json_response(await hh_dicts.get_dictionaries())
 
@@ -199,6 +305,10 @@ def create_webapp_api() -> web.Application:
     app.router.add_get("/api/health", _health)
     app.router.add_get("/api/me", _me)
     app.router.add_get("/api/vacancies/search", _search)
+    app.router.add_get("/api/vacancies/{vid}", _vacancy)
     app.router.add_get("/api/dictionaries", _dictionaries)
     app.router.add_get("/api/areas/suggest", _areas_suggest)
+    app.router.add_get("/api/favorites", _favorites_list)
+    app.router.add_post("/api/favorites", _favorite_add)
+    app.router.add_delete("/api/favorites/{vid}", _favorite_delete)
     return app

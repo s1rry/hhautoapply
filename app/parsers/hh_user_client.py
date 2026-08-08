@@ -226,6 +226,23 @@ class HHUserClient:
             log.warning("user_vacancy_desc_error", vid=vacancy_id, error=str(e))
         return ""
 
+    async def get_vacancy(self, vacancy_id: str) -> dict | None:
+        """Полная карточка вакансии (GET /vacancies/{id}) — для детальной страницы."""
+        if not await self.ensure_token():
+            return None
+        headers = {"Authorization": f"Bearer {self.access_token}", "User-Agent": UA}
+        try:
+            async with httpx.AsyncClient(timeout=20) as c:
+                r = await c.get(f"{API}/vacancies/{vacancy_id}", headers=headers)
+            if r.status_code == 200:
+                return r.json()
+            if r.status_code == 403 and ("token_revoked" in (r.text or "").lower() or "bad_authorization" in (r.text or "").lower()):
+                self.token_revoked = True
+            log.warning("user_vacancy_get_failed", vid=vacancy_id, status=r.status_code)
+        except Exception as e:
+            log.warning("user_vacancy_get_error", vid=vacancy_id, error=str(e))
+        return None
+
     async def mark_read(self, nid: str) -> bool:
         """Пометить переписку прочитанной (открытие сообщений снимает флаг
         «новое» в hh). Так отказы не висят непрочитанными в чатах."""

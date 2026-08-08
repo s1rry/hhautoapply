@@ -10,6 +10,7 @@ from app.models.message import RecruiterMessage
 from app.models.ai_generation import AIGeneration
 from app.models.session import BrowserSession
 from app.models.blacklist import Blacklist
+from app.models.favorite import Favorite
 
 __all__ = [
     "Base",
@@ -24,4 +25,5 @@ __all__ = [
     "AIGeneration",
     "BrowserSession",
     "Blacklist",
+    "Favorite",
 ]
