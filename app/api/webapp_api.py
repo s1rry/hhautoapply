@@ -24,67 +24,11 @@ from app.models.saved_search import SavedSearch, SearchHistory
 from app.parsers.hh_user_client import HHUserClient
 from app.api.webapp_auth import telegram_id_from_init_data
 from app.api import hh_dicts
+from app.api.webapp_filters import (
+    build_hh_params, vacancy_card, vacancy_detail, resume_view,
+)
 
 log = structlog.get_logger()
-
-# Параметры поиска hh, которые принимаем как повторяющиеся (мультивыбор).
-_MULTI = (
-    "area", "metro", "experience", "employment", "schedule", "work_format",
-    "professional_role", "industry", "education", "label", "search_field",
-    "driver_license_types",
-)
-# Одиночные скалярные параметры hh.
-_SCALAR = ("text", "salary", "currency", "only_with_salary", "employer_id",
-           "period", "date_from", "order_by")
-
-_ALLOWED_ORDER = {"relevance", "publication_time", "salary_desc", "salary_asc"}
-
-
-def _build_hh_params(query) -> dict:
-    """Собрать безопасный dict параметров hh из query-строки запроса.
-
-    Только whitelist-ключи; значения — как есть (hh валидирует коды сам,
-    неизвестные молча игнорирует). Пагинация/сортировка обрабатываются отдельно.
-    """
-    params: dict = {}
-    for key in _MULTI:
-        vals = [v for v in query.getall(key, []) if v]
-        if vals:
-            params[key] = vals
-    for key in _SCALAR:
-        v = query.get(key)
-        if v:
-            params[key] = v
-    order = query.get("order_by")
-    if order in _ALLOWED_ORDER:
-        params["order_by"] = order
-    elif "order_by" in params:
-        params.pop("order_by")
-    return params
-
-
-def _vacancy_card(v: dict) -> dict:
-    """Урезать вакансию hh до карточки для списка (без лишнего веса)."""
-    salary = v.get("salary") or {}
-    emp = v.get("employer") or {}
-    area = v.get("area") or {}
-    return {
-        "id": v.get("id"),
-        "name": v.get("name"),
-        "company": emp.get("name"),
-        "company_logo": (emp.get("logo_urls") or {}).get("90") if emp.get("logo_urls") else None,
-        "area": area.get("name"),
-        "salary_from": salary.get("from"),
-        "salary_to": salary.get("to"),
-        "currency": salary.get("currency"),
-        "experience": (v.get("experience") or {}).get("name"),
-        "schedule": (v.get("schedule") or {}).get("name"),
-        "employment": (v.get("employment") or {}).get("name"),
-        "published_at": v.get("published_at"),
-        "url": v.get("alternate_url"),
-        "requirement": (v.get("snippet") or {}).get("requirement"),
-        "responsibility": (v.get("snippet") or {}).get("responsibility"),
-    }
 
 
 async def _client_for(user: User) -> HHUserClient | None:
@@ -165,7 +109,7 @@ async def _search(request: web.Request) -> web.Response:
     except ValueError:
         per_page = 20
 
-    params = _build_hh_params(q)
+    params = build_hh_params(q)
     async with async_session() as session:
         user = (await session.execute(
             select(User).where(User.telegram_id == tid))).scalar_one_or_none()
@@ -184,35 +128,8 @@ async def _search(request: web.Request) -> web.Response:
         "found": found,
         "page": page,
         "per_page": per_page,
-        "items": [_vacancy_card(v) for v in items],
+        "items": [vacancy_card(v) for v in items],
     })
-
-
-def _vacancy_detail(v: dict) -> dict:
-    """Полная карточка вакансии hh → нормализованный ответ для детальной страницы."""
-    salary = v.get("salary") or {}
-    emp = v.get("employer") or {}
-    area = v.get("area") or {}
-    addr = v.get("address") or {}
-    return {
-        "id": v.get("id"),
-        "name": v.get("name"),
-        "company": emp.get("name"),
-        "company_logo": (emp.get("logo_urls") or {}).get("240") if emp.get("logo_urls") else None,
-        "company_url": emp.get("alternate_url"),
-        "area": area.get("name"),
-        "address": addr.get("raw"),
-        "salary_from": salary.get("from"),
-        "salary_to": salary.get("to"),
-        "currency": salary.get("currency"),
-        "experience": (v.get("experience") or {}).get("name"),
-        "schedule": (v.get("schedule") or {}).get("name"),
-        "employment": (v.get("employment") or {}).get("name"),
-        "description": v.get("description"),  # HTML
-        "key_skills": [s.get("name") for s in (v.get("key_skills") or []) if s.get("name")],
-        "published_at": v.get("published_at"),
-        "url": v.get("alternate_url"),
-    }
 
 
 async def _vacancy(request: web.Request) -> web.Response:
@@ -232,7 +149,7 @@ async def _vacancy(request: web.Request) -> web.Response:
         if client.token_revoked:
             return web.json_response({"error": "hh_token_revoked"}, status=409)
         return web.json_response({"error": "not_found"}, status=404)
-    return web.json_response(_vacancy_detail(data))
+    return web.json_response(vacancy_detail(data))
 
 
 async def _favorites_list(request: web.Request) -> web.Response:
@@ -399,37 +316,6 @@ def _safe_json(s: str) -> dict:
         return {}
 
 
-def _resume_view(r: dict) -> dict:
-    """Резюме hh → нормализованный ответ для экрана «Моё резюме»."""
-    salary = r.get("salary") or {}
-    area = r.get("area") or {}
-    total = r.get("total_experience") or {}
-    experience = []
-    for e in r.get("experience") or []:
-        experience.append({
-            "company": e.get("company"),
-            "position": e.get("position"),
-            "start": e.get("start"),
-            "end": e.get("end"),
-            "description": e.get("description"),
-        })
-    return {
-        "title": r.get("title"),
-        "first_name": r.get("first_name"),
-        "last_name": r.get("last_name"),
-        "area": area.get("name"),
-        "salary_amount": salary.get("amount"),
-        "salary_currency": salary.get("currency"),
-        "total_months": total.get("months"),
-        "skills": r.get("skill_set") or [],
-        "experience": experience,
-        "education_level": (r.get("education") or {}).get("level", {}).get("name")
-        if isinstance(r.get("education"), dict) else None,
-        "updated_at": r.get("updated_at"),
-        "url": r.get("alternate_url"),
-    }
-
-
 async def _resume(request: web.Request) -> web.Response:
     async with async_session() as session:
         user = await _user_by_tid(session, request["telegram_id"])
@@ -446,7 +332,7 @@ async def _resume(request: web.Request) -> web.Response:
         if client.token_revoked:
             return web.json_response({"error": "hh_token_revoked"}, status=409)
         return web.json_response({"error": "not_found"}, status=404)
-    return web.json_response(_resume_view(data))
+    return web.json_response(resume_view(data))
 
 
 async def _resume_bump(request: web.Request) -> web.Response:
