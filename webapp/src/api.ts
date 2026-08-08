@@ -5,7 +5,7 @@
  * наборе не показывать результаты предыдущего запроса (race condition). */
 import { initData } from "./telegram";
 import type {
-  Dictionaries, Filters, MeResponse, SearchResponse, SelectedArea, VacancyCard, VacancyDetail,
+  Dictionaries, Filters, MeResponse, ResumeView, SearchResponse, SelectedArea, VacancyCard, VacancyDetail,
 } from "./types";
 
 const BASE = "/api";
@@ -95,6 +95,13 @@ export function addFavorite(card: VacancyCard): Promise<{ ok: boolean; id: strin
 
 export function removeFavorite(id: string): Promise<{ ok: boolean; id: string }> {
   return req(`/favorites/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export function getResume(signal?: AbortSignal): Promise<ResumeView> {
+  return get<ResumeView>("/resume", signal);
+}
+export function bumpResume(): Promise<{ ok: boolean }> {
+  return req("/resume/bump", { method: "POST" });
 }
 
 export interface SavedSearchItem { id: number; name: string; filters: Filters }

@@ -8,6 +8,7 @@ import { VacancyCardView } from "./components/VacancyCard";
 import { FilterSheet } from "./components/FilterSheet";
 import { Detail } from "./components/Detail";
 import { Searches } from "./components/Searches";
+import { Resume } from "./components/Resume";
 import { pluralVacancies } from "./format";
 import { haptic, backButton } from "./telegram";
 import { useFavorites } from "./favorites";
@@ -18,7 +19,8 @@ type Screen =
   | { name: "list" }
   | { name: "detail"; id: string }
   | { name: "favorites" }
-  | { name: "searches" };
+  | { name: "searches" }
+  | { name: "resume" };
 
 export default function App() {
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
@@ -138,6 +140,10 @@ export default function App() {
     );
   }
 
+  if (screen.name === "resume") {
+    return <div className="app"><Resume /></div>;
+  }
+
   const canSave = filters.text.trim() !== "" || countActiveFilters(filters) > 0;
   const doSave = () => {
     const name = filters.text.trim() || `Фильтров: ${countActiveFilters(filters)}`;
@@ -155,11 +161,14 @@ export default function App() {
         <div className="topbar">
           <b>Вакансии</b>
           <span className="topbar-links">
+            <button className="link-btn" onClick={() => { haptic("light"); setScreen({ name: "resume" }); }}>
+              📄 Резюме
+            </button>
             <button className="link-btn" onClick={() => { haptic("light"); setScreen({ name: "searches" }); }}>
               🔖 Поиски
             </button>
             <button className="link-btn" onClick={() => { haptic("light"); setScreen({ name: "favorites" }); }}>
-              ♥ Сохранённые
+              ♥
             </button>
           </span>
         </div>

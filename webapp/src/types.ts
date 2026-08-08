@@ -43,6 +43,29 @@ export interface VacancyDetail {
   url: string | null;
 }
 
+export interface ResumeExperience {
+  company: string | null;
+  position: string | null;
+  start: string | null;
+  end: string | null;
+  description: string | null;
+}
+
+export interface ResumeView {
+  title: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  area: string | null;
+  salary_amount: number | null;
+  salary_currency: string | null;
+  total_months: number | null;
+  skills: string[];
+  experience: ResumeExperience[];
+  education_level: string | null;
+  updated_at: string | null;
+  url: string | null;
+}
+
 export interface MeResponse {
   exists: boolean;
   telegram_id?: number;

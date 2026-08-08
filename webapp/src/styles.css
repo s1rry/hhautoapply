@@ -147,6 +147,12 @@ body {
   margin-top: 16px;
 }
 .detail-actions .btn-ghost.saved { color: #e0245e; }
+.btn-primary:disabled { opacity: .6; }
+.exp { padding: 10px 0; border-bottom: 1px solid var(--tg-secondary-bg); }
+.exp:last-child { border-bottom: none; }
+.exp-pos { font-size: 15px; font-weight: 600; }
+.exp-meta { color: var(--tg-hint); font-size: 13px; margin: 2px 0 4px; }
+.bump-msg { text-align: center; font-size: 14px; color: var(--tg-hint); padding: 8px; }
 .detail-actions .btn-primary { text-align: center; text-decoration: none; line-height: 1.4; }
 
 /* --- Чипсы активных фильтров --- */
