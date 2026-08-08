@@ -20,6 +20,7 @@ from app.config import settings
 from app.database import async_session
 from app.models.user import User
 from app.models.favorite import Favorite
+from app.models.saved_search import SavedSearch, SearchHistory
 from app.parsers.hh_user_client import HHUserClient
 from app.api.webapp_auth import telegram_id_from_init_data
 from app.api import hh_dicts
@@ -291,6 +292,113 @@ async def _favorite_delete(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "id": hh_id})
 
 
+HISTORY_LIMIT = 40
+
+
+async def _user_by_tid(session, tid: int) -> User | None:
+    return (await session.execute(select(User).where(User.telegram_id == tid))).scalar_one_or_none()
+
+
+async def _saved_list(request: web.Request) -> web.Response:
+    async with async_session() as session:
+        user = await _user_by_tid(session, request["telegram_id"])
+        if not user:
+            return web.json_response({"items": []})
+        rows = (await session.execute(
+            select(SavedSearch).where(SavedSearch.user_id == user.id)
+            .order_by(SavedSearch.created_at.desc()))).scalars().all()
+    return web.json_response({"items": [
+        {"id": r.id, "name": r.name, "filters": _safe_json(r.filters_json)} for r in rows
+    ]})
+
+
+async def _saved_add(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "bad_json"}, status=400)
+    name = (str(body.get("name") or "Поиск")).strip()[:120]
+    filters = _json.dumps(body.get("filters") or {}, ensure_ascii=False)[:8000]
+    async with async_session() as session:
+        user = await _user_by_tid(session, request["telegram_id"])
+        if not user:
+            return web.json_response({"error": "user_not_found"}, status=404)
+        row = SavedSearch(user_id=user.id, name=name, filters_json=filters)
+        session.add(row)
+        await session.commit()
+        return web.json_response({"id": row.id, "name": name})
+
+
+async def _saved_delete(request: web.Request) -> web.Response:
+    sid = int(request.match_info["sid"]) if request.match_info["sid"].isdigit() else -1
+    async with async_session() as session:
+        user = await _user_by_tid(session, request["telegram_id"])
+        if user:
+            await session.execute(delete(SavedSearch).where(
+                SavedSearch.id == sid, SavedSearch.user_id == user.id))
+            await session.commit()
+    return web.json_response({"ok": True})
+
+
+async def _history_list(request: web.Request) -> web.Response:
+    async with async_session() as session:
+        user = await _user_by_tid(session, request["telegram_id"])
+        if not user:
+            return web.json_response({"items": []})
+        rows = (await session.execute(
+            select(SearchHistory).where(SearchHistory.user_id == user.id)
+            .order_by(SearchHistory.created_at.desc()).limit(HISTORY_LIMIT))).scalars().all()
+    return web.json_response({"items": [
+        {"id": r.id, "text": r.query_text, "filters": _safe_json(r.filters_json),
+         "found": r.results_count} for r in rows
+    ]})
+
+
+async def _history_add(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "bad_json"}, status=400)
+    text = (str(body.get("text") or "")).strip()[:255]
+    filters = _json.dumps(body.get("filters") or {}, ensure_ascii=False)[:8000]
+    found = int(body.get("found") or 0)
+    async with async_session() as session:
+        user = await _user_by_tid(session, request["telegram_id"])
+        if not user:
+            return web.json_response({"error": "user_not_found"}, status=404)
+        # Дедуп: если последняя запись совпадает по тексту+фильтрам — не плодим.
+        last = (await session.execute(
+            select(SearchHistory).where(SearchHistory.user_id == user.id)
+            .order_by(SearchHistory.created_at.desc()).limit(1))).scalar_one_or_none()
+        if not (last and last.query_text == text and last.filters_json == filters):
+            session.add(SearchHistory(user_id=user.id, query_text=text,
+                                      filters_json=filters, results_count=found))
+            # Чистим хвост сверх лимита.
+            old = (await session.execute(
+                select(SearchHistory.id).where(SearchHistory.user_id == user.id)
+                .order_by(SearchHistory.created_at.desc()).offset(HISTORY_LIMIT))).scalars().all()
+            if old:
+                await session.execute(delete(SearchHistory).where(SearchHistory.id.in_(old)))
+            await session.commit()
+    return web.json_response({"ok": True})
+
+
+async def _history_clear(request: web.Request) -> web.Response:
+    async with async_session() as session:
+        user = await _user_by_tid(session, request["telegram_id"])
+        if user:
+            await session.execute(delete(SearchHistory).where(SearchHistory.user_id == user.id))
+            await session.commit()
+    return web.json_response({"ok": True})
+
+
+def _safe_json(s: str) -> dict:
+    try:
+        return _json.loads(s)
+    except Exception:
+        return {}
+
+
 async def _dictionaries(_request: web.Request) -> web.Response:
     return web.json_response(await hh_dicts.get_dictionaries())
 
@@ -311,4 +419,10 @@ def create_webapp_api() -> web.Application:
     app.router.add_get("/api/favorites", _favorites_list)
     app.router.add_post("/api/favorites", _favorite_add)
     app.router.add_delete("/api/favorites/{vid}", _favorite_delete)
+    app.router.add_get("/api/saved-searches", _saved_list)
+    app.router.add_post("/api/saved-searches", _saved_add)
+    app.router.add_delete("/api/saved-searches/{sid}", _saved_delete)
+    app.router.add_get("/api/history", _history_list)
+    app.router.add_post("/api/history", _history_add)
+    app.router.add_delete("/api/history", _history_clear)
     return app

@@ -11,6 +11,7 @@ from app.models.ai_generation import AIGeneration
 from app.models.session import BrowserSession
 from app.models.blacklist import Blacklist
 from app.models.favorite import Favorite
+from app.models.saved_search import SavedSearch, SearchHistory
 
 __all__ = [
     "Base",
@@ -26,4 +27,6 @@ __all__ = [
     "BrowserSession",
     "Blacklist",
     "Favorite",
+    "SavedSearch",
+    "SearchHistory",
 ]
