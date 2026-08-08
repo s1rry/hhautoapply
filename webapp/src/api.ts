@@ -4,20 +4,26 @@
  * Поддерживает отмену устаревших запросов (AbortController), чтобы при быстром
  * наборе не показывать результаты предыдущего запроса (race condition). */
 import { initData } from "./telegram";
-import type { Dictionaries, Filters, MeResponse, SearchResponse, SelectedArea } from "./types";
+import type {
+  Dictionaries, Filters, MeResponse, SearchResponse, SelectedArea, VacancyCard, VacancyDetail,
+} from "./types";
 
 const BASE = "/api";
 
-async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
+async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "X-Telegram-Init-Data": initData() },
-    signal,
+    ...init,
+    headers: { "X-Telegram-Init-Data": initData(), ...(init?.headers ?? {}) },
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new ApiError(res.status, body?.error || `HTTP ${res.status}`);
   }
   return res.json() as Promise<T>;
+}
+
+function get<T>(path: string, signal?: AbortSignal): Promise<T> {
+  return req<T>(path, { signal });
 }
 
 export class ApiError extends Error {
@@ -69,6 +75,26 @@ export function searchVacancies(
   signal?: AbortSignal
 ): Promise<SearchResponse> {
   return get<SearchResponse>(`/vacancies/search?${buildQuery(f, page, perPage)}`, signal);
+}
+
+export function getVacancy(id: string, signal?: AbortSignal): Promise<VacancyDetail> {
+  return get<VacancyDetail>(`/vacancies/${encodeURIComponent(id)}`, signal);
+}
+
+export function getFavorites(signal?: AbortSignal): Promise<{ items: VacancyCard[]; ids: string[] }> {
+  return get<{ items: VacancyCard[]; ids: string[] }>("/favorites", signal);
+}
+
+export function addFavorite(card: VacancyCard): Promise<{ ok: boolean; id: string }> {
+  return req("/favorites", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(card),
+  });
+}
+
+export function removeFavorite(id: string): Promise<{ ok: boolean; id: string }> {
+  return req(`/favorites/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 /** Сколько «групп» фильтров активно (для бейджа на кнопке «Фильтры»). */

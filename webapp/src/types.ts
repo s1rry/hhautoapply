@@ -23,6 +23,26 @@ export interface SearchResponse {
   items: VacancyCard[];
 }
 
+export interface VacancyDetail {
+  id: string;
+  name: string;
+  company: string | null;
+  company_logo: string | null;
+  company_url: string | null;
+  area: string | null;
+  address: string | null;
+  salary_from: number | null;
+  salary_to: number | null;
+  currency: string | null;
+  experience: string | null;
+  schedule: string | null;
+  employment: string | null;
+  description: string | null; // HTML
+  key_skills: string[];
+  published_at: string | null;
+  url: string | null;
+}
+
 export interface MeResponse {
   exists: boolean;
   telegram_id?: number;

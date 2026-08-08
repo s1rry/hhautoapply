@@ -1,12 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, getMe, getDictionaries, searchVacancies, countActiveFilters } from "./api";
+import {
+  ApiError, getMe, getDictionaries, searchVacancies, getFavorites, countActiveFilters,
+} from "./api";
 import { EMPTY_FILTERS, type Dictionaries, type Filters, type VacancyCard } from "./types";
 import { VacancyCardView } from "./components/VacancyCard";
 import { FilterSheet } from "./components/FilterSheet";
+import { Detail } from "./components/Detail";
 import { pluralVacancies } from "./format";
 import { haptic, backButton } from "./telegram";
+import { useFavorites } from "./favorites";
 
 const PER_PAGE = 20;
+
+type Screen = { name: "list" } | { name: "detail"; id: string } | { name: "favorites" };
 
 export default function App() {
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
@@ -19,7 +25,9 @@ export default function App() {
   const [connected, setConnected] = useState<boolean | null>(null);
   const [dict, setDict] = useState<Dictionaries | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [screen, setScreen] = useState<Screen>({ name: "list" });
 
+  const fav = useFavorites();
   const abortRef = useRef<AbortController | null>(null);
   const filtersRef = useRef(filters);
   filtersRef.current = filters;
@@ -29,11 +37,15 @@ export default function App() {
     getDictionaries().then(setDict).catch(() => setDict(null));
   }, []);
 
-  // Кнопка «Назад» Telegram закрывает панель фильтров.
+  // Telegram Back: закрывает панель / возвращает из деталей и избранного.
   useEffect(() => {
-    const onBack = () => setSheetOpen(false);
-    backButton(sheetOpen, onBack);
-  }, [sheetOpen]);
+    const showBack = sheetOpen || screen.name !== "list";
+    const onBack = () => {
+      if (sheetOpen) setSheetOpen(false);
+      else setScreen({ name: "list" });
+    };
+    backButton(showBack, onBack);
+  }, [sheetOpen, screen]);
 
   const runSearch = useCallback(async (f: Filters, nextPage: number) => {
     abortRef.current?.abort();
@@ -66,7 +78,7 @@ export default function App() {
   const sentinel = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = sentinel.current;
-    if (!el || found === null) return;
+    if (!el || found === null || screen.name !== "list") return;
     const io = new IntersectionObserver((entries) => {
       if (entries[0].isIntersecting && !loading && !loadingMore && items.length < (found ?? 0)) {
         runSearch(filtersRef.current, page + 1);
@@ -74,9 +86,9 @@ export default function App() {
     }, { rootMargin: "300px" });
     io.observe(el);
     return () => io.disconnect();
-  }, [found, page, loading, loadingMore, items.length, runSearch]);
+  }, [found, page, loading, loadingMore, items.length, runSearch, screen]);
 
-  const activeCount = countActiveFilters(filters);
+  const open = (id: string) => { haptic("light"); setScreen({ name: "detail", id }); };
 
   if (connected === false) {
     return (
@@ -89,9 +101,28 @@ export default function App() {
     );
   }
 
+  if (screen.name === "detail") {
+    return (
+      <div className="app">
+        <Detail id={screen.id} saved={fav.ids.has(screen.id)} onToggleSave={fav.toggle} />
+      </div>
+    );
+  }
+
+  if (screen.name === "favorites") {
+    return <div className="app"><Favorites fav={fav} onOpen={open} /></div>;
+  }
+
+  const activeCount = countActiveFilters(filters);
   return (
     <div className="app">
       <div className="search-header">
+        <div className="topbar">
+          <b>Вакансии</b>
+          <button className="link-btn" onClick={() => { haptic("light"); setScreen({ name: "favorites" }); }}>
+            ♥ Сохранённые
+          </button>
+        </div>
         <div className="search-row">
           <input
             className="search-input"
@@ -117,7 +148,7 @@ export default function App() {
       ) : (
         <>
           {items.map((v) => (
-            <VacancyCardView key={v.id} v={v} />
+            <VacancyCardView key={v.id} v={v} saved={fav.ids.has(v.id)} onOpen={open} onToggleSave={fav.toggle} />
           ))}
           <div ref={sentinel} />
           {loadingMore && <div className="loader">Загружаем ещё…</div>}
@@ -136,7 +167,37 @@ export default function App() {
   );
 }
 
-/** Строка чипсов активных фильтров под поиском — с быстрым снятием. */
+function Favorites({
+  fav,
+  onOpen,
+}: {
+  fav: ReturnType<typeof useFavorites>;
+  onOpen: (id: string) => void;
+}) {
+  const [items, setItems] = useState<VacancyCard[] | null>(null);
+  useEffect(() => {
+    getFavorites().then((r) => setItems(r.items)).catch(() => setItems([]));
+  }, []);
+  // Показываем актуально сохранённые (учёт снятия сердечка на этом экране).
+  const visible = (items ?? []).filter((v) => fav.ids.has(v.id));
+  if (items === null) return <Skeletons />;
+  if (visible.length === 0) {
+    return (
+      <div className="state">
+        <h3>Пока пусто</h3>
+        <p>Сохраняйте интересные вакансии сердечком — они появятся здесь.</p>
+      </div>
+    );
+  }
+  return (
+    <div style={{ paddingTop: 12 }}>
+      {visible.map((v) => (
+        <VacancyCardView key={v.id} v={v} saved={fav.ids.has(v.id)} onOpen={onOpen} onToggleSave={fav.toggle} />
+      ))}
+    </div>
+  );
+}
+
 function ActiveChips({
   filters,
   dict,

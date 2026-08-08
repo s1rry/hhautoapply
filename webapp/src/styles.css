@@ -100,6 +100,42 @@ body {
 
 .loader { text-align: center; padding: 20px; color: var(--tg-hint); font-size: 14px; }
 
+/* --- Верхняя панель --- */
+.topbar { display: flex; align-items: center; justify-content: space-between; padding: 2px 2px 8px; }
+.topbar b { font-size: 18px; }
+.link-btn { border: none; background: none; color: var(--tg-link); font-size: 14px; font-weight: 500; padding: 4px; }
+
+/* --- Сердечко сохранения --- */
+.heart {
+  border: none; background: none; flex-shrink: 0;
+  font-size: 24px; line-height: 1; color: var(--tg-hint);
+  padding: 0 2px; align-self: flex-start;
+}
+.heart.on { color: #e0245e; }
+
+/* --- Детальная страница --- */
+.detail { padding: 12px 0 24px; }
+.detail-head { margin-bottom: 12px; }
+.detail-logo { width: 56px; height: 56px; border-radius: 10px; object-fit: contain; background: #fff; margin-bottom: 10px; }
+.detail-title { font-size: 22px; font-weight: 700; margin: 0 0 8px; line-height: 1.25; }
+.detail-salary { font-size: 18px; font-weight: 600; margin-bottom: 6px; }
+.detail-company { font-size: 15px; margin-bottom: 2px; }
+.detail-area { color: var(--tg-hint); font-size: 14px; }
+.detail-block { margin-top: 18px; }
+.detail-block h4 { margin: 0 0 8px; font-size: 15px; }
+.chip.skill { background: var(--tg-secondary-bg); color: var(--tg-text); }
+.detail-desc { font-size: 15px; line-height: 1.55; word-break: break-word; }
+.detail-desc ul, .detail-desc ol { padding-left: 20px; }
+.detail-desc p { margin: 8px 0; }
+.detail-actions {
+  position: sticky; bottom: 0; display: flex; gap: 10px;
+  padding: 12px 0 calc(8px + env(safe-area-inset-bottom));
+  background: linear-gradient(transparent, var(--tg-bg) 24%);
+  margin-top: 16px;
+}
+.detail-actions .btn-ghost.saved { color: #e0245e; }
+.detail-actions .btn-primary { text-align: center; text-decoration: none; line-height: 1.4; }
+
 /* --- Чипсы активных фильтров --- */
 .active-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0 2px; }
 .chip-removable {

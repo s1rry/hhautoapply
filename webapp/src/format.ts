@@ -1,8 +1,12 @@
-import type { VacancyCard } from "./types";
-
 const CUR: Record<string, string> = { RUR: "₽", RUB: "₽", USD: "$", EUR: "€", KZT: "₸", BYR: "Br", UAH: "₴" };
 
-export function formatSalary(v: VacancyCard): string | null {
+interface SalaryLike {
+  salary_from: number | null;
+  salary_to: number | null;
+  currency: string | null;
+}
+
+export function formatSalary(v: SalaryLike): string | null {
   const { salary_from: from, salary_to: to, currency } = v;
   if (!from && !to) return null;
   const sym = currency ? CUR[currency] ?? currency : "";
