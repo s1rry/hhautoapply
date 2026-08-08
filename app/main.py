@@ -171,6 +171,16 @@ async def main():
             site = web.TCPSite(runner, "127.0.0.1", settings.payment_webhook_port)
             await site.start()
             log.info("payment_webhook_started", port=settings.payment_webhook_port)
+
+        # API Telegram Mini App (поиск вакансий и профиль). Поднимаем всегда,
+        # если задан токен бота — им же валидируется initData. Наружу отдаёт nginx.
+        if settings.tg_bot_token:
+            from app.api.webapp_api import create_webapp_api
+            miniapp_runner = web.AppRunner(create_webapp_api())
+            await miniapp_runner.setup()
+            miniapp_site = web.TCPSite(miniapp_runner, "127.0.0.1", settings.miniapp_port)
+            await miniapp_site.start()
+            log.info("miniapp_api_started", port=settings.miniapp_port)
     else:
         # Старый одиночный роутер (глобальные /stats, /vacancies, /messages…) —
         # ТОЛЬКО в single-режиме. В multi он бы показывал данные всех пользователей.

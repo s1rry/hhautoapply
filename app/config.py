@@ -89,6 +89,8 @@ class Settings(BaseSettings):
     crypto_usdt_trc20: str = ""
     # Порт локального веб-сервера для вебхука оплаты.
     payment_webhook_port: int = 8088
+    # Порт локального API Telegram Mini App (проксируется nginx → hh.volnacrm.ru).
+    miniapp_port: int = 8090
 
     # Пробный период для КАЖДОГО нового пользователя (как в VPN-подписках).
     # Слоты — тупик: кончатся, и новички перестанут видеть продукт в полную
