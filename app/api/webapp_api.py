@@ -20,6 +20,7 @@ from app.database import async_session
 from app.models.user import User
 from app.parsers.hh_user_client import HHUserClient
 from app.api.webapp_auth import telegram_id_from_init_data
+from app.api import hh_dicts
 
 log = structlog.get_logger()
 
@@ -184,9 +185,20 @@ async def _search(request: web.Request) -> web.Response:
     })
 
 
+async def _dictionaries(_request: web.Request) -> web.Response:
+    return web.json_response(await hh_dicts.get_dictionaries())
+
+
+async def _areas_suggest(request: web.Request) -> web.Response:
+    text = request.query.get("text", "")
+    return web.json_response({"items": await hh_dicts.suggest_areas(text)})
+
+
 def create_webapp_api() -> web.Application:
     app = web.Application(middlewares=[_auth_mw])
     app.router.add_get("/api/health", _health)
     app.router.add_get("/api/me", _me)
     app.router.add_get("/api/vacancies/search", _search)
+    app.router.add_get("/api/dictionaries", _dictionaries)
+    app.router.add_get("/api/areas/suggest", _areas_suggest)
     return app
