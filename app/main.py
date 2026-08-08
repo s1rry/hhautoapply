@@ -181,6 +181,19 @@ async def main():
             miniapp_site = web.TCPSite(miniapp_runner, "127.0.0.1", settings.miniapp_port)
             await miniapp_site.start()
             log.info("miniapp_api_started", port=settings.miniapp_port)
+
+            # Кнопка запуска Mini App у поля ввода (menu button, рядом со
+            # скрепкой) — глобально для всех чатов, чтобы не грузить нижнее меню.
+            if settings.miniapp_url.startswith("https://"):
+                from aiogram.types import MenuButtonWebApp, WebAppInfo
+                try:
+                    await bot.set_chat_menu_button(
+                        menu_button=MenuButtonWebApp(
+                            text="🔎 Поиск",
+                            web_app=WebAppInfo(url=settings.miniapp_url)))
+                    log.info("miniapp_menu_button_set")
+                except Exception as e:
+                    log.warning("miniapp_menu_button_failed", error=str(e))
     else:
         # Старый одиночный роутер (глобальные /stats, /vacancies, /messages…) —
         # ТОЛЬКО в single-режиме. В multi он бы показывал данные всех пользователей.

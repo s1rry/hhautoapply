@@ -16,7 +16,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
-    ReplyKeyboardMarkup, KeyboardButton, WebAppInfo,
+    ReplyKeyboardMarkup, KeyboardButton,
 )
 from sqlalchemy import select, func
 
@@ -119,18 +119,16 @@ def main_reply_kb(connected: bool = True) -> ReplyKeyboardMarkup:
                       [KeyboardButton(text=BTN_WHY)]],
             resize_keyboard=True,
         )
-    rows = [
-        [KeyboardButton(text=BTN_TASK), KeyboardButton(text=BTN_STATS)],
-        [KeyboardButton(text=BTN_SETTINGS)],
-        [KeyboardButton(text=BTN_SUPPORT), KeyboardButton(text=BTN_PROJECTS)],
-    ]
-    # Кнопка запуска Mini App (поиск вакансий внутри Telegram). Reply-кнопки с
-    # web_app работают только по HTTPS — адрес из настроек.
-    if settings.miniapp_url.startswith("https://"):
-        rows.insert(0, [KeyboardButton(
-            text="🔎 Поиск вакансий",
-            web_app=WebAppInfo(url=settings.miniapp_url))])
-    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+    # Кнопку запуска Mini App держим не здесь, а как menu button у поля ввода
+    # (bot.set_chat_menu_button в main.py) — иначе нижнее меню разрастается.
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_TASK), KeyboardButton(text=BTN_STATS)],
+            [KeyboardButton(text=BTN_SETTINGS)],
+            [KeyboardButton(text=BTN_SUPPORT), KeyboardButton(text=BTN_PROJECTS)],
+        ],
+        resize_keyboard=True,
+    )
 
 
 class TaskInput(StatesGroup):
