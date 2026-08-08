@@ -1,0 +1,101 @@
+/* Тема берётся из Telegram (переменные --tg-* проставляет telegram.ts),
+   с разумными фолбэками для light/dark, если открыто вне Telegram. */
+:root {
+  --tg-bg: #ffffff;
+  --tg-text: #1a1a1a;
+  --tg-hint: #8a8a8e;
+  --tg-link: #2f7bf6;
+  --tg-button: #2f7bf6;
+  --tg-button-text: #ffffff;
+  --tg-secondary-bg: #f3f4f6;
+  --radius: 14px;
+  --gap: 12px;
+}
+:root[data-theme="dark"] {
+  --tg-bg: #17181c;
+  --tg-text: #f2f2f5;
+  --tg-hint: #9a9aa2;
+  --tg-secondary-bg: #23242a;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--tg-bg);
+  color: var(--tg-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.app { max-width: 640px; margin: 0 auto; padding: 0 12px env(safe-area-inset-bottom); }
+
+/* --- Поисковая шапка (липкая) --- */
+.search-header {
+  position: sticky; top: 0; z-index: 10;
+  background: var(--tg-bg);
+  padding: 10px 0 8px;
+}
+.search-row { display: flex; gap: 8px; }
+.search-input {
+  flex: 1; min-width: 0;
+  padding: 12px 14px;
+  border: none; border-radius: var(--radius);
+  background: var(--tg-secondary-bg);
+  color: var(--tg-text);
+  font-size: 16px; /* 16px — чтобы iOS не зумил при фокусе */
+}
+.search-input::placeholder { color: var(--tg-hint); }
+.filters-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 14px; border: none; border-radius: var(--radius);
+  background: var(--tg-secondary-bg); color: var(--tg-text);
+  font-size: 15px; font-weight: 500; white-space: nowrap;
+}
+.filters-btn .badge {
+  background: var(--tg-button); color: var(--tg-button-text);
+  border-radius: 999px; font-size: 12px; padding: 1px 7px; font-weight: 600;
+}
+.result-count { color: var(--tg-hint); font-size: 13px; padding: 6px 2px 2px; }
+
+/* --- Карточка вакансии --- */
+.card {
+  background: var(--tg-secondary-bg);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-bottom: var(--gap);
+  display: block; text-decoration: none; color: inherit;
+}
+.card:active { opacity: .7; }
+.card-top { display: flex; justify-content: space-between; gap: 10px; }
+.card-title { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
+.card-salary { font-size: 15px; font-weight: 600; color: var(--tg-text); margin: 2px 0 6px; }
+.card-company { color: var(--tg-hint); font-size: 14px; margin-bottom: 8px; }
+.card-logo { width: 40px; height: 40px; border-radius: 8px; object-fit: contain; background: #fff; flex-shrink: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chip {
+  font-size: 12px; color: var(--tg-hint);
+  background: var(--tg-bg); border-radius: 8px; padding: 3px 8px;
+}
+.card-snippet { color: var(--tg-hint); font-size: 13px; margin-top: 8px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.card-date { color: var(--tg-hint); font-size: 12px; margin-top: 8px; }
+
+/* --- Состояния --- */
+.state { text-align: center; padding: 48px 24px; color: var(--tg-hint); }
+.state h3 { color: var(--tg-text); margin: 0 0 8px; font-size: 17px; }
+.state button {
+  margin-top: 16px; padding: 10px 20px; border: none; border-radius: var(--radius);
+  background: var(--tg-button); color: var(--tg-button-text); font-size: 15px; font-weight: 600;
+}
+
+/* Скелетоны загрузки */
+.skeleton { background: var(--tg-secondary-bg); border-radius: var(--radius); margin-bottom: var(--gap); height: 128px; overflow: hidden; position: relative; }
+.skeleton::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(128,128,128,.12), transparent);
+  animation: shimmer 1.3s infinite;
+}
+@keyframes shimmer { 100% { transform: translateX(100%); } }
+
+.loader { text-align: center; padding: 20px; color: var(--tg-hint); font-size: 14px; }
