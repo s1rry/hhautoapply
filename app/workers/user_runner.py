@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 import structlog
 from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.database import async_session
@@ -638,11 +639,16 @@ async def run_account_cycle(user_id: int, ctx: dict, tasks: list[dict]) -> int:
                         continue
 
                 async with async_session() as session:
-                    # Дедуп в рамках этого аккаунта.
+                    # Дедуп по уникальному ключу (user_id, platform, external_id) —
+                    # именно он ограничивает таблицу. Аккаунт (account_ref) в ключ
+                    # не входит: одну вакансию у юзера хранит одна запись, даже если
+                    # её видят разные hh-аккаунты. Фильтровать SELECT по account_ref
+                    # нельзя — иначе запись «под другим аккаунтом» не находится и
+                    # INSERT падает IntegrityError на UNIQUE-констрейнте.
                     vac = (await session.execute(
                         select(Vacancy).where(
                             Vacancy.user_id == user_id, Vacancy.platform == "hh",
-                            Vacancy.external_id == vid, Vacancy.account_ref == ref,
+                            Vacancy.external_id == vid,
                         )
                     )).scalar_one_or_none()
                     if vac and vac.status in (VacancyStatus.APPLIED, VacancyStatus.REJECTED):
@@ -654,8 +660,22 @@ async def run_account_cycle(user_id: int, ctx: dict, tasks: list[dict]) -> int:
                             search_task_id=task_id,
                         )
                         session.add(vac)
-                        await session.commit()
-                        await session.refresh(vac)
+                        try:
+                            await session.commit()
+                            await session.refresh(vac)
+                        except IntegrityError:
+                            # Гонка: запись успел создать параллельный прогон.
+                            # Откатываемся и перечитываем существующую.
+                            await session.rollback()
+                            vac = (await session.execute(
+                                select(Vacancy).where(
+                                    Vacancy.user_id == user_id, Vacancy.platform == "hh",
+                                    Vacancy.external_id == vid,
+                                )
+                            )).scalar_one_or_none()
+                            if vac is None or vac.status in (
+                                VacancyStatus.APPLIED, VacancyStatus.REJECTED):
+                                continue
                     vac_id = vac.id
 
                 # Умный отбор: ИИ оценивает соответствие вакансии резюме и отсекает слабые.
