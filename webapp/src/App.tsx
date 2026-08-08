@@ -1,18 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError, getMe, getDictionaries, searchVacancies, getFavorites, countActiveFilters,
+  recordHistory, saveSearch,
 } from "./api";
 import { EMPTY_FILTERS, type Dictionaries, type Filters, type VacancyCard } from "./types";
 import { VacancyCardView } from "./components/VacancyCard";
 import { FilterSheet } from "./components/FilterSheet";
 import { Detail } from "./components/Detail";
+import { Searches } from "./components/Searches";
 import { pluralVacancies } from "./format";
 import { haptic, backButton } from "./telegram";
 import { useFavorites } from "./favorites";
 
 const PER_PAGE = 20;
 
-type Screen = { name: "list" } | { name: "detail"; id: string } | { name: "favorites" };
+type Screen =
+  | { name: "list" }
+  | { name: "detail"; id: string }
+  | { name: "favorites" }
+  | { name: "searches" };
 
 export default function App() {
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
@@ -31,6 +37,8 @@ export default function App() {
   const abortRef = useRef<AbortController | null>(null);
   const filtersRef = useRef(filters);
   filtersRef.current = filters;
+  const lastHistKey = useRef<string>("");
+  const [savedNote, setSavedNote] = useState(false);
 
   useEffect(() => {
     getMe().then((me) => setConnected(me.connected)).catch(() => setConnected(false));
@@ -59,6 +67,15 @@ export default function App() {
       setFound(res.found);
       setPage(res.page);
       setItems((prev) => (nextPage === 0 ? res.items : [...prev, ...res.items]));
+      // Пишем в историю только осмысленный поиск (есть текст или фильтры),
+      // первую страницу, и дедупим повтор того же запроса.
+      if (nextPage === 0 && (f.text.trim() || countActiveFilters(f) > 0)) {
+        const key = JSON.stringify(f);
+        if (key !== lastHistKey.current) {
+          lastHistKey.current = key;
+          recordHistory(f.text.trim(), f, res.found).catch(() => {});
+        }
+      }
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") return;
       setError(e instanceof ApiError ? e.code : "network");
@@ -113,15 +130,38 @@ export default function App() {
     return <div className="app"><Favorites fav={fav} onOpen={open} /></div>;
   }
 
+  if (screen.name === "searches") {
+    return (
+      <div className="app">
+        <Searches onApply={(f) => { setFilters(f); setScreen({ name: "list" }); }} />
+      </div>
+    );
+  }
+
+  const canSave = filters.text.trim() !== "" || countActiveFilters(filters) > 0;
+  const doSave = () => {
+    const name = filters.text.trim() || `Фильтров: ${countActiveFilters(filters)}`;
+    saveSearch(name, filters).then(() => {
+      haptic("success");
+      setSavedNote(true);
+      setTimeout(() => setSavedNote(false), 1800);
+    }).catch(() => {});
+  };
+
   const activeCount = countActiveFilters(filters);
   return (
     <div className="app">
       <div className="search-header">
         <div className="topbar">
           <b>Вакансии</b>
-          <button className="link-btn" onClick={() => { haptic("light"); setScreen({ name: "favorites" }); }}>
-            ♥ Сохранённые
-          </button>
+          <span className="topbar-links">
+            <button className="link-btn" onClick={() => { haptic("light"); setScreen({ name: "searches" }); }}>
+              🔖 Поиски
+            </button>
+            <button className="link-btn" onClick={() => { haptic("light"); setScreen({ name: "favorites" }); }}>
+              ♥ Сохранённые
+            </button>
+          </span>
         </div>
         <div className="search-row">
           <input
@@ -136,7 +176,14 @@ export default function App() {
           </button>
         </div>
         <ActiveChips filters={filters} dict={dict} onChange={setFilters} />
-        {found !== null && !loading && <div className="result-count">{pluralVacancies(found)}</div>}
+        <div className="header-actions">
+          {found !== null && !loading && <span className="result-count">{pluralVacancies(found)}</span>}
+          {canSave && (
+            <button className="save-search" onClick={doSave}>
+              {savedNote ? "✓ Сохранено" : "🔖 Сохранить поиск"}
+            </button>
+          )}
+        </div>
       </div>
 
       {loading ? (

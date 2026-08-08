@@ -97,6 +97,37 @@ export function removeFavorite(id: string): Promise<{ ok: boolean; id: string }>
   return req(`/favorites/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
+export interface SavedSearchItem { id: number; name: string; filters: Filters }
+export interface HistoryItem { id: number; text: string; filters: Filters; found: number }
+
+export function getSavedSearches(signal?: AbortSignal): Promise<{ items: SavedSearchItem[] }> {
+  return get("/saved-searches", signal);
+}
+export function saveSearch(name: string, filters: Filters): Promise<{ id: number }> {
+  return req("/saved-searches", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, filters }),
+  });
+}
+export function deleteSavedSearch(id: number): Promise<{ ok: boolean }> {
+  return req(`/saved-searches/${id}`, { method: "DELETE" });
+}
+
+export function getHistory(signal?: AbortSignal): Promise<{ items: HistoryItem[] }> {
+  return get("/history", signal);
+}
+export function recordHistory(text: string, filters: Filters, found: number): Promise<unknown> {
+  return req("/history", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, filters, found }),
+  });
+}
+export function clearHistory(): Promise<{ ok: boolean }> {
+  return req("/history", { method: "DELETE" });
+}
+
 /** Сколько «групп» фильтров активно (для бейджа на кнопке «Фильтры»). */
 export function countActiveFilters(f: Filters): number {
   let n = 0;
