@@ -91,6 +91,8 @@ class Settings(BaseSettings):
     payment_webhook_port: int = 8088
     # Порт локального API Telegram Mini App (проксируется nginx → hh.volnacrm.ru).
     miniapp_port: int = 8090
+    # Публичный HTTPS-адрес Mini App (кнопка WebApp в боте).
+    miniapp_url: str = "https://hh.volnacrm.ru"
 
     # Пробный период для КАЖДОГО нового пользователя (как в VPN-подписках).
     # Слоты — тупик: кончатся, и новички перестанут видеть продукт в полную
