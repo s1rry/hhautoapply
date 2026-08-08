@@ -399,6 +399,69 @@ def _safe_json(s: str) -> dict:
         return {}
 
 
+def _resume_view(r: dict) -> dict:
+    """Резюме hh → нормализованный ответ для экрана «Моё резюме»."""
+    salary = r.get("salary") or {}
+    area = r.get("area") or {}
+    total = r.get("total_experience") or {}
+    experience = []
+    for e in r.get("experience") or []:
+        experience.append({
+            "company": e.get("company"),
+            "position": e.get("position"),
+            "start": e.get("start"),
+            "end": e.get("end"),
+            "description": e.get("description"),
+        })
+    return {
+        "title": r.get("title"),
+        "first_name": r.get("first_name"),
+        "last_name": r.get("last_name"),
+        "area": area.get("name"),
+        "salary_amount": salary.get("amount"),
+        "salary_currency": salary.get("currency"),
+        "total_months": total.get("months"),
+        "skills": r.get("skill_set") or [],
+        "experience": experience,
+        "education_level": (r.get("education") or {}).get("level", {}).get("name")
+        if isinstance(r.get("education"), dict) else None,
+        "updated_at": r.get("updated_at"),
+        "url": r.get("alternate_url"),
+    }
+
+
+async def _resume(request: web.Request) -> web.Response:
+    async with async_session() as session:
+        user = await _user_by_tid(session, request["telegram_id"])
+        if not user:
+            return web.json_response({"error": "user_not_found"}, status=404)
+        client = await _client_for(user)
+        if client is None:
+            return web.json_response({"error": "hh_not_connected"}, status=409)
+        if not user.hh_resume_id:
+            return web.json_response({"error": "no_resume"}, status=404)
+        data = await client.get_resume()
+        await _persist_token(session, user, client)
+    if not data:
+        if client.token_revoked:
+            return web.json_response({"error": "hh_token_revoked"}, status=409)
+        return web.json_response({"error": "not_found"}, status=404)
+    return web.json_response(_resume_view(data))
+
+
+async def _resume_bump(request: web.Request) -> web.Response:
+    async with async_session() as session:
+        user = await _user_by_tid(session, request["telegram_id"])
+        if not user:
+            return web.json_response({"error": "user_not_found"}, status=404)
+        client = await _client_for(user)
+        if client is None:
+            return web.json_response({"error": "hh_not_connected"}, status=409)
+        ok = await client.bump_resume()
+        await _persist_token(session, user, client)
+    return web.json_response({"ok": ok})
+
+
 async def _dictionaries(_request: web.Request) -> web.Response:
     return web.json_response(await hh_dicts.get_dictionaries())
 
@@ -425,4 +488,6 @@ def create_webapp_api() -> web.Application:
     app.router.add_get("/api/history", _history_list)
     app.router.add_post("/api/history", _history_add)
     app.router.add_delete("/api/history", _history_clear)
+    app.router.add_get("/api/resume", _resume)
+    app.router.add_post("/api/resume/bump", _resume_bump)
     return app

@@ -284,6 +284,23 @@ class HHUserClient:
             log.warning("negotiation_messages_error", nid=nid, error=str(e))
         return []
 
+    async def get_resume(self) -> dict | None:
+        """Своё резюме (GET /resumes/{id}) — для экрана «Моё резюме» в Mini App."""
+        if not self.resume_id or not await self.ensure_token():
+            return None
+        headers = {"Authorization": f"Bearer {self.access_token}", "User-Agent": UA}
+        try:
+            async with httpx.AsyncClient(timeout=20) as c:
+                r = await c.get(f"{API}/resumes/{self.resume_id}", headers=headers)
+            if r.status_code == 200:
+                return r.json()
+            if r.status_code == 403 and ("token_revoked" in (r.text or "").lower() or "bad_authorization" in (r.text or "").lower()):
+                self.token_revoked = True
+            log.warning("user_resume_get_failed", status=r.status_code)
+        except Exception as e:
+            log.warning("user_resume_get_error", error=str(e))
+        return None
+
     async def bump_resume(self) -> bool:
         """Поднять резюме на hh (POST /resumes/{id}/publish). 204 = успех, 429 = рано."""
         if not self.resume_id or not await self.ensure_token():
