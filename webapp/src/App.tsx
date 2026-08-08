@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, getMe, searchVacancies, countActiveFilters } from "./api";
-import { EMPTY_FILTERS, type Filters, type VacancyCard } from "./types";
+import { ApiError, getMe, getDictionaries, searchVacancies, countActiveFilters } from "./api";
+import { EMPTY_FILTERS, type Dictionaries, type Filters, type VacancyCard } from "./types";
 import { VacancyCardView } from "./components/VacancyCard";
+import { FilterSheet } from "./components/FilterSheet";
 import { pluralVacancies } from "./format";
-import { haptic } from "./telegram";
+import { haptic, backButton } from "./telegram";
 
 const PER_PAGE = 20;
 
@@ -16,17 +17,23 @@ export default function App() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState<boolean | null>(null);
+  const [dict, setDict] = useState<Dictionaries | null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
   const filtersRef = useRef(filters);
   filtersRef.current = filters;
 
-  // Профиль: подключён ли hh. Без подключения поиск невозможен.
   useEffect(() => {
-    getMe()
-      .then((me) => setConnected(me.connected))
-      .catch(() => setConnected(false));
+    getMe().then((me) => setConnected(me.connected)).catch(() => setConnected(false));
+    getDictionaries().then(setDict).catch(() => setDict(null));
   }, []);
+
+  // Кнопка «Назад» Telegram закрывает панель фильтров.
+  useEffect(() => {
+    const onBack = () => setSheetOpen(false);
+    backButton(sheetOpen, onBack);
+  }, [sheetOpen]);
 
   const runSearch = useCallback(async (f: Filters, nextPage: number) => {
     abortRef.current?.abort();
@@ -42,15 +49,13 @@ export default function App() {
       setItems((prev) => (nextPage === 0 ? res.items : [...prev, ...res.items]));
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") return;
-      const code = e instanceof ApiError ? e.code : "network";
-      setError(code);
+      setError(e instanceof ApiError ? e.code : "network");
     } finally {
       setLoading(false);
       setLoadingMore(false);
     }
   }, []);
 
-  // Дебаунс: поиск через 400мс после последнего изменения фильтров.
   useEffect(() => {
     if (connected !== true) return;
     const t = setTimeout(() => runSearch(filtersRef.current, 0), 400);
@@ -58,18 +63,12 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters, connected]);
 
-  // Бесконечная прокрутка.
   const sentinel = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = sentinel.current;
     if (!el || found === null) return;
     const io = new IntersectionObserver((entries) => {
-      if (
-        entries[0].isIntersecting &&
-        !loading &&
-        !loadingMore &&
-        items.length < (found ?? 0)
-      ) {
+      if (entries[0].isIntersecting && !loading && !loadingMore && items.length < (found ?? 0)) {
         runSearch(filtersRef.current, page + 1);
       }
     }, { rootMargin: "300px" });
@@ -101,16 +100,12 @@ export default function App() {
             onChange={(e) => setFilters((f) => ({ ...f, text: e.target.value }))}
             enterKeyHint="search"
           />
-          <button
-            className="filters-btn"
-            onClick={() => { haptic("light"); /* фильтры — следующий этап */ }}
-          >
+          <button className="filters-btn" onClick={() => { haptic("light"); setSheetOpen(true); }}>
             Фильтры{activeCount > 0 && <span className="badge">{activeCount}</span>}
           </button>
         </div>
-        {found !== null && !loading && (
-          <div className="result-count">{pluralVacancies(found)}</div>
-        )}
+        <ActiveChips filters={filters} dict={dict} onChange={setFilters} />
+        {found !== null && !loading && <div className="result-count">{pluralVacancies(found)}</div>}
       </div>
 
       {loading ? (
@@ -128,6 +123,62 @@ export default function App() {
           {loadingMore && <div className="loader">Загружаем ещё…</div>}
         </>
       )}
+
+      {sheetOpen && (
+        <FilterSheet
+          initial={filters}
+          dict={dict}
+          onApply={(f) => { setFilters(f); setSheetOpen(false); }}
+          onClose={() => setSheetOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Строка чипсов активных фильтров под поиском — с быстрым снятием. */
+function ActiveChips({
+  filters,
+  dict,
+  onChange,
+}: {
+  filters: Filters;
+  dict: Dictionaries | null;
+  onChange: (fn: (f: Filters) => Filters) => void;
+}) {
+  const chips: { label: string; clear: () => void }[] = [];
+  const nameOf = (list: { id: string; name: string }[] | undefined, id: string) =>
+    list?.find((x) => x.id === id)?.name ?? id;
+
+  for (const a of filters.areas)
+    chips.push({ label: a.name, clear: () => onChange((f) => ({ ...f, areas: f.areas.filter((x) => x.id !== a.id) })) });
+  const groups: [keyof Filters, { id: string; name: string }[] | undefined][] = [
+    ["work_format", dict?.work_format], ["experience", dict?.experience],
+    ["employment", dict?.employment], ["schedule", dict?.schedule],
+    ["education", dict?.education], ["professional_role", dict?.professional_role],
+    ["industry", dict?.industry],
+  ];
+  for (const [key, list] of groups) {
+    for (const id of filters[key] as string[]) {
+      chips.push({
+        label: nameOf(list, id),
+        clear: () => onChange((f) => ({ ...f, [key]: (f[key] as string[]).filter((x) => x !== id) })),
+      });
+    }
+  }
+  if (filters.salary)
+    chips.push({ label: `от ${filters.salary.toLocaleString("ru-RU")} ₽`, clear: () => onChange((f) => ({ ...f, salary: undefined })) });
+  if (filters.only_with_salary)
+    chips.push({ label: "с доходом", clear: () => onChange((f) => ({ ...f, only_with_salary: false })) });
+
+  if (chips.length === 0) return null;
+  return (
+    <div className="active-chips">
+      {chips.map((c, i) => (
+        <button className="chip-removable" key={i} onClick={() => { haptic("light"); c.clear(); }}>
+          {c.label} ✕
+        </button>
+      ))}
     </div>
   );
 }

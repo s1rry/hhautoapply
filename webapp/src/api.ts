@@ -4,7 +4,7 @@
  * Поддерживает отмену устаревших запросов (AbortController), чтобы при быстром
  * наборе не показывать результаты предыдущего запроса (race condition). */
 import { initData } from "./telegram";
-import type { Filters, MeResponse, SearchResponse } from "./types";
+import type { Dictionaries, Filters, MeResponse, SearchResponse, SelectedArea } from "./types";
 
 const BASE = "/api";
 
@@ -30,35 +30,60 @@ export function getMe(signal?: AbortSignal): Promise<MeResponse> {
   return get<MeResponse>("/me", signal);
 }
 
+export function getDictionaries(signal?: AbortSignal): Promise<Dictionaries> {
+  return get<Dictionaries>("/dictionaries", signal);
+}
+
+export async function suggestAreas(text: string, signal?: AbortSignal): Promise<SelectedArea[]> {
+  const r = await get<{ items: SelectedArea[] }>(
+    `/areas/suggest?text=${encodeURIComponent(text)}`,
+    signal
+  );
+  return r.items;
+}
+
+function buildQuery(f: Filters, page: number, perPage: number): string {
+  const q = new URLSearchParams();
+  if (f.text.trim()) q.set("text", f.text.trim());
+  for (const s of f.searchField) q.append("search_field", s);
+  for (const a of f.areas) q.append("area", a.id);
+  for (const e of f.experience) q.append("experience", e);
+  for (const e of f.employment) q.append("employment", e);
+  for (const s of f.schedule) q.append("schedule", s);
+  for (const w of f.work_format) q.append("work_format", w);
+  for (const e of f.education) q.append("education", e);
+  for (const r of f.professional_role) q.append("professional_role", r);
+  for (const i of f.industry) q.append("industry", i);
+  if (f.salary) q.set("salary", String(f.salary));
+  if (f.only_with_salary) q.set("only_with_salary", "true");
+  if (f.order_by) q.set("order_by", f.order_by);
+  q.set("page", String(page));
+  q.set("per_page", String(perPage));
+  return q.toString();
+}
+
 export function searchVacancies(
   f: Filters,
   page: number,
   perPage: number,
   signal?: AbortSignal
 ): Promise<SearchResponse> {
-  const q = new URLSearchParams();
-  if (f.text.trim()) q.set("text", f.text.trim());
-  for (const a of f.area) q.append("area", a);
-  for (const e of f.experience) q.append("experience", e);
-  for (const e of f.employment) q.append("employment", e);
-  for (const s of f.schedule) q.append("schedule", s);
-  for (const w of f.work_format) q.append("work_format", w);
-  if (f.salary) q.set("salary", String(f.salary));
-  if (f.only_with_salary) q.set("only_with_salary", "true");
-  if (f.order_by) q.set("order_by", f.order_by);
-  q.set("page", String(page));
-  q.set("per_page", String(perPage));
-  return get<SearchResponse>(`/vacancies/search?${q.toString()}`, signal);
+  return get<SearchResponse>(`/vacancies/search?${buildQuery(f, page, perPage)}`, signal);
 }
 
+/** Сколько «групп» фильтров активно (для бейджа на кнопке «Фильтры»). */
 export function countActiveFilters(f: Filters): number {
   let n = 0;
-  n += f.area.length ? 1 : 0;
-  n += f.experience.length ? 1 : 0;
-  n += f.employment.length ? 1 : 0;
-  n += f.schedule.length ? 1 : 0;
-  n += f.work_format.length ? 1 : 0;
-  n += f.salary ? 1 : 0;
-  n += f.only_with_salary ? 1 : 0;
+  if (f.areas.length) n++;
+  if (f.experience.length) n++;
+  if (f.employment.length) n++;
+  if (f.schedule.length) n++;
+  if (f.work_format.length) n++;
+  if (f.education.length) n++;
+  if (f.professional_role.length) n++;
+  if (f.industry.length) n++;
+  if (f.salary) n++;
+  if (f.only_with_salary) n++;
+  if (f.searchField.length) n++;
   return n;
 }

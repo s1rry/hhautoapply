@@ -32,14 +32,40 @@ export interface MeResponse {
   is_paid?: boolean;
 }
 
-/** Активные фильтры поиска (расширяется по мере готовности спеки). */
+export interface DictItem {
+  id: string;
+  name: string;
+  group?: string;
+}
+
+export interface Dictionaries {
+  experience: DictItem[];
+  employment: DictItem[];
+  schedule: DictItem[];
+  order_by: DictItem[];
+  work_format: DictItem[];
+  education: DictItem[];
+  professional_role: DictItem[];
+  industry: DictItem[];
+}
+
+export interface SelectedArea {
+  id: string;
+  name: string;
+}
+
+/** Активные фильтры поиска (соответствуют параметрам /vacancies hh). */
 export interface Filters {
   text: string;
-  area: string[];
+  searchField: string[]; // name | company_name | description
+  areas: SelectedArea[];
   experience: string[];
   employment: string[];
   schedule: string[];
   work_format: string[];
+  education: string[];
+  professional_role: string[];
+  industry: string[];
   salary?: number;
   only_with_salary?: boolean;
   order_by?: string;
@@ -47,9 +73,13 @@ export interface Filters {
 
 export const EMPTY_FILTERS: Filters = {
   text: "",
-  area: [],
+  searchField: [],
+  areas: [],
   experience: [],
   employment: [],
   schedule: [],
   work_format: [],
+  education: [],
+  professional_role: [],
+  industry: [],
 };
